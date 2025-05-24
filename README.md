@@ -30,11 +30,11 @@ Decrypting an image.
 PixelLock -d -i ./encrypted.enc -o ./new-image
 ```
 
-### Security Challenge
+### Security Challenge (NOT YET STARTED!)
 
 There may be a security bug due to an incorrect implementation in this project and/or a vulnerable dependency used.
 
-This is an open challenge for those interested in bug bounties. Find a way to decrypt the image in the [challenge directory](https://github.com/saltukalakus/PixelLock/blob/main/challange). If the image is correct, you win 500 GBP!
+This is an open challenge for those interested in bug bounties. Find a way to decrypt the image in the [challenge directory](https://github.com/saltukalakus/PixelLock/blob/main/challange). If the image is correct, you win **500 GBP**!
 
 Rules:
 
@@ -44,7 +44,9 @@ Rules:
 
 3. Open an issue and upload the decrypted image. Don't disclose how you were able to bypass the secret. I will reach out to you to understand how you bypassed the secret and make the payment.
 
-4. Only one hacker who opens the issue with the correct image first wins.
+4. Only **one** hacker who opens an issue first with the correct image wins.
+
+5. The challange is 60 days time boxed. I will share the secret in the challange directory if no one can find a vulnerability. 
 
 ### Disclaimer
 

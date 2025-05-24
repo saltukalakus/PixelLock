@@ -90,6 +90,7 @@ fn detect_file_format(file_path: &str) -> Option<&'static str> {
 }
 
 fn derive_encryption_key(secret: &str) -> [u8; 32] {
+    // Ensure the hash result is exactly 32 bytes
     let mut hasher = Sha256::new();
     hasher.update(secret);
     let hash_result = hasher.finalize();
@@ -101,7 +102,7 @@ fn main() {
     let matches = Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images in JPEG, PNG or GIF using AES-256-CBC")
+        .about("Encrypts and decrypts images in JPEG, PNG, or GIF using AES-256-CBC")
         .arg(
             Arg::new("decrypt")
                 .short('d')
@@ -150,7 +151,7 @@ fn main() {
         eprintln!("Error: Input file '{}' not found.", input_file);
         return;
     }
-    
+
     // Prompt the user for the secret twice
     print!("Enter your secret: ");
     io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
