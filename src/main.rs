@@ -83,38 +83,39 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <secret-string>", args[0]);
+    if args.len() < 4 {
+        eprintln!(
+            "Usage: {} <secret-string> <input-image-path> <output-encrypted-path>",
+            args[0]
+        );
         return;
     }
 
     let secret = &args[1];
+    let input_img = &args[2];
+    let encrypted_img_output = &args[3];
+    let decrypted_img_output = format!("{}_decrypted", input_img);
+
     let mut hasher = Sha256::new();
     hasher.update(secret);
     let encryption_key_bytes = hasher.finalize();
 
-    let input_img = "my_secret_image.jpeg";
-    let encrypted_img_output = "my_secret_image.enc";
-    let decrypted_img_output = "my_secret_image_decrypted.jpeg";
-
     if !Path::new(input_img).exists() {
-        eprintln!("'{}' not found. Creating a dummy PNG image for demonstration.", input_img);
-        let dummy_img = image::RgbImage::new(100, 100);
-        if let Err(e) = dummy_img.save(input_img) {
-            eprintln!("Error creating dummy image: {}", e);
-            return;
-        }
+        eprintln!("Error: Input image '{}' not found.", input_img);
+        return;
     }
 
     match encrypt_image(input_img, encrypted_img_output, &encryption_key_bytes[..32].try_into().unwrap()) {
         Ok(original_format) => {
             if let Err(e) = decrypt_image(
                 encrypted_img_output,
-                decrypted_img_output,
+                &decrypted_img_output,
                 &encryption_key_bytes[..32].try_into().unwrap(),
                 &original_format,
             ) {
                 eprintln!("Error decrypting image: {}", e);
+            } else {
+                println!("Decrypted image saved to: {}", decrypted_img_output);
             }
         }
         Err(e) => {
