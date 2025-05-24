@@ -4,7 +4,8 @@ use cbc::{Decryptor, Encryptor};
 use image::{io::Reader as ImageReader, ImageError, ImageFormat};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
-use std::{env, fs, io::Cursor, path::Path};
+use std::{env, fs, io::{self, Cursor, Write}, path::Path};
+use rpassword::read_password;
 
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
@@ -87,30 +88,44 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 5 {
+    if args.len() < 4 {
         eprintln!(
-            "Usage: {} <encrypt|decrypt> <secret-string> <input-file-path> <output-file-path> [original-format]",
+            "Usage: {} <encrypt|decrypt> <input-file-path> <output-file-path> [original-format]",
             args[0]
         );
         return;
     }
 
     let mode = &args[1];
-    let secret = &args[2];
-    let input_file = &args[3];
-    let output_file = &args[4];
+    let input_file = &args[2];
+    let output_file = &args[3];
     let original_format = if mode == "decrypt" {
-        if args.len() < 6 {
+        if args.len() < 5 {
             eprintln!("Error: Missing original format for decryption.");
             return;
         }
-        &args[5]
+        &args[4]
     } else {
         ""
     };
 
+    // Prompt the user for the secret twice
+    print!("Enter your secret: ");
+    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+    let secret1 = read_password().expect("Failed to read secret");
+
+    print!("Re-enter your secret: ");
+    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+    let secret2 = read_password().expect("Failed to read secret");
+
+    // Validate that both secrets match
+    if secret1 != secret2 {
+        eprintln!("Error: Secrets do not match. Please try again.");
+        return;
+    }
+
     let mut hasher = Sha256::new();
-    hasher.update(secret);
+    hasher.update(secret1);
     let encryption_key_bytes = hasher.finalize();
 
     if !Path::new(input_file).exists() {
