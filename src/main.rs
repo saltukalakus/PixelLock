@@ -64,12 +64,16 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         ))
     })?;
 
-    let format = ImageFormat::from_extension(original_format).ok_or_else(|| {
-        ImageError::Decoding(image::error::DecodingError::new(
-            image::error::ImageFormatHint::Unknown,
-            format!("Unknown image format: {}", original_format),
-        ))
-    })?;
+    // Use the explicitly passed original format
+    let format = match ImageFormat::from_extension(original_format) {
+        Some(fmt) => fmt,
+        None => {
+            return Err(ImageError::Decoding(image::error::DecodingError::new(
+                image::error::ImageFormatHint::Unknown,
+                format!("Unknown image format: {}", original_format),
+            )));
+        }
+    };
 
     let img = ImageReader::new(Cursor::new(decrypted_data))
         .with_guessed_format()?
@@ -83,43 +87,62 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 4 {
+    if args.len() < 5 {
         eprintln!(
-            "Usage: {} <secret-string> <input-image-path> <output-encrypted-path>",
+            "Usage: {} <encrypt|decrypt> <secret-string> <input-file-path> <output-file-path> [original-format]",
             args[0]
         );
         return;
     }
 
-    let secret = &args[1];
-    let input_img = &args[2];
-    let encrypted_img_output = &args[3];
-    let decrypted_img_output = format!("{}_decrypted", input_img);
+    let mode = &args[1];
+    let secret = &args[2];
+    let input_file = &args[3];
+    let output_file = &args[4];
+    let original_format = if mode == "decrypt" {
+        if args.len() < 6 {
+            eprintln!("Error: Missing original format for decryption.");
+            return;
+        }
+        &args[5]
+    } else {
+        ""
+    };
 
     let mut hasher = Sha256::new();
     hasher.update(secret);
     let encryption_key_bytes = hasher.finalize();
 
-    if !Path::new(input_img).exists() {
-        eprintln!("Error: Input image '{}' not found.", input_img);
+    if !Path::new(input_file).exists() {
+        eprintln!("Error: Input file '{}' not found.", input_file);
         return;
     }
 
-    match encrypt_image(input_img, encrypted_img_output, &encryption_key_bytes[..32].try_into().unwrap()) {
-        Ok(original_format) => {
-            if let Err(e) = decrypt_image(
-                encrypted_img_output,
-                &decrypted_img_output,
-                &encryption_key_bytes[..32].try_into().unwrap(),
-                &original_format,
-            ) {
-                eprintln!("Error decrypting image: {}", e);
-            } else {
-                println!("Decrypted image saved to: {}", decrypted_img_output);
+    match mode.as_str() {
+        "encrypt" => {
+            match encrypt_image(input_file, output_file, &encryption_key_bytes[..32].try_into().unwrap()) {
+                Ok(original_format) => {
+                    println!("File encrypted successfully. Original format: {}", original_format);
+                }
+                Err(e) => {
+                    eprintln!("Error encrypting file: {}", e);
+                }
             }
         }
-        Err(e) => {
-            eprintln!("Error encrypting image: {}", e);
+        "decrypt" => {
+            if let Err(e) = decrypt_image(
+                input_file,
+                output_file,
+                &encryption_key_bytes[..32].try_into().unwrap(),
+                original_format,
+            ) {
+                eprintln!("Error decrypting file: {}", e);
+            } else {
+                println!("File decrypted successfully to: {}", output_file);
+            }
+        }
+        _ => {
+            eprintln!("Error: Invalid mode '{}'. Use 'encrypt' or 'decrypt'.", mode);
         }
     }
 }
