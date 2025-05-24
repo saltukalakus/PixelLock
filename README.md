@@ -13,6 +13,7 @@ PixelLock is a command-line tool for encrypting and decrypting image files using
    cd PixelLock
    cargo build --release
    ```
+
 ### Usage
 
 Encrypting an image.
@@ -21,8 +22,8 @@ Encrypting an image.
 PixelLock -e -i ./image.jpeg -o ./encrypted.enc
 ```
 
-Decrypting an image.
+Decrypting an image. The format is appended by instropection so you may skip ht
 
 ```bash
-PixelLock -d -f jpeg -i ./encrypted.enc -o ./image.jpeg 
+PixelLock -d -i ./encrypted.enc -o ./new-image.jpeg
 ```

@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Cursor, Write}, path::Path};
 use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
+use std::fs::File;
+use std::io::Read;
 
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
@@ -52,7 +54,6 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_encrypted_path: P,
     output_decrypted_path: P,
     key: &[u8; 32],
-    original_format: &str,
 ) -> Result<(), ImageError> {
     let full_encrypted_data = fs::read(&input_encrypted_path)?;
     let (iv_bytes, encrypted_data) = full_encrypted_data.split_at(16);
@@ -66,24 +67,26 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         ))
     })?;
 
-    // Use the explicitly passed original format
-    let format = match ImageFormat::from_extension(original_format) {
-        Some(fmt) => fmt,
-        None => {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Unknown,
-                format!("Unknown image format: {}", original_format),
-            )));
-        }
-    };
-
     let img = ImageReader::new(Cursor::new(decrypted_data))
         .with_guessed_format()?
         .decode()?;
-    img.save_with_format(&output_decrypted_path, format)?;
+    img.save(&output_decrypted_path)?;
 
     println!("Image decrypted successfully to: {:?}", output_decrypted_path);
     Ok(())
+}
+
+fn detect_file_format(file_path: &str) -> Option<&'static str> {
+    let mut file = File::open(file_path).ok()?;
+    let mut buffer = [0u8; 8];
+    file.read_exact(&mut buffer).ok()?;
+
+    match &buffer {
+        [0xFF, 0xD8, 0xFF, ..] => Some("jpeg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("png"),
+        [b'G', b'I', b'F', 0x38, 0x39, 0x61, ..] => Some("gif"),
+        _ => None,
+    }
 }
 
 fn main() {
@@ -122,13 +125,6 @@ fn main() {
                 .value_parser(clap::value_parser!(String))
                 .help("Path to the output file"),
         )
-        .arg(
-            Arg::new("format")
-                .short('f')
-                .long("format")
-                .value_parser(clap::value_parser!(String))
-                .help("Original format of the image (required for decryption)"),
-        )
         .get_matches();
 
     // Determine mode (encrypt or decrypt)
@@ -142,12 +138,6 @@ fn main() {
 
     let input_file = matches.get_one::<String>("input").unwrap();
     let output_file = matches.get_one::<String>("output").unwrap();
-    let original_format = matches.get_one::<String>("format").map(|s| s.as_str()).unwrap_or("");
-
-    if is_decrypt && original_format.is_empty() {
-        eprintln!("Error: Original format is required for decryption.");
-        return;
-    }
 
     // Prompt the user for the secret twice
     print!("Enter your secret: ");
@@ -187,11 +177,16 @@ fn main() {
             input_file,
             output_file,
             &encryption_key_bytes[..32].try_into().unwrap(),
-            original_format,
         ) {
             eprintln!("Error decrypting file: {}", e);
         } else {
-            println!("File decrypted successfully to: {}", output_file);
+            if let Some(format) = detect_file_format(output_file) {
+                let new_output_file = format!("{}.{}", output_file, format);
+                std::fs::rename(output_file, &new_output_file).expect("Failed to rename file");
+                println!("Decrypted file saved as: {}", new_output_file);
+            } else {
+                eprintln!("Warning: Could not detect file format. Output saved as is.");
+            }
         }
     }
 }
