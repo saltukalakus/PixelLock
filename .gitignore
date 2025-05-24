@@ -22,3 +22,8 @@ target/
 *.gif
 *.bmp
 *.tiff
+
+*.enc
+
+.DS_Store
+.vscode/
