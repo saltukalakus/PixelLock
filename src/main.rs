@@ -180,8 +180,11 @@ fn main() {
         ) {
             eprintln!("Error decrypting file: {}", e);
         } else {
+            let output_path = Path::new(output_file);
+            let output_stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or(output_file);
+
             if let Some(format) = detect_file_format(output_file) {
-                let new_output_file = format!("{}.{}", output_file, format);
+                let new_output_file = format!("{}.{}", output_stem, format);
                 std::fs::rename(output_file, &new_output_file).expect("Failed to rename file");
                 println!("Decrypted file saved as: {}", new_output_file);
             } else {
