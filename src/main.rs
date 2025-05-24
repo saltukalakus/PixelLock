@@ -4,7 +4,8 @@ use cbc::{Decryptor, Encryptor};
 use image::{io::Reader as ImageReader, ImageError, ImageFormat};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
-use std::{env, fs, io::{self, Cursor, Write}, path::Path};
+use std::{fs, io::{self, Cursor, Write}, path::Path};
+use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
 
 type Aes256CbcEnc = Encryptor<Aes256>;
@@ -86,28 +87,67 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    // Define CLI arguments using `clap`
+    let matches = Command::new("PixelLock")
+        .version("1.0")
+        .author("Your Name")
+        .about("Encrypts and decrypts image files")
+        .arg(
+            Arg::new("decrypt")
+                .short('d')
+                .long("decrypt")
+                .action(ArgAction::SetTrue)
+                .help("Decrypt the input file"),
+        )
+        .arg(
+            Arg::new("encrypt")
+                .short('e')
+                .long("encrypt")
+                .action(ArgAction::SetTrue)
+                .help("Encrypt the input file"),
+        )
+        .arg(
+            Arg::new("input")
+                .short('i')
+                .long("input")
+                .required(true)
+                .value_parser(clap::value_parser!(String))
+                .help("Path to the input file"),
+        )
+        .arg(
+            Arg::new("output")
+                .short('o')
+                .long("output")
+                .required(true)
+                .value_parser(clap::value_parser!(String))
+                .help("Path to the output file"),
+        )
+        .arg(
+            Arg::new("format")
+                .short('f')
+                .long("format")
+                .value_parser(clap::value_parser!(String))
+                .help("Original format of the image (required for decryption)"),
+        )
+        .get_matches();
 
-    if args.len() < 4 {
-        eprintln!(
-            "Usage: {} <encrypt|decrypt> <input-file-path> <output-file-path> [original-format]",
-            args[0]
-        );
+    // Determine mode (encrypt or decrypt)
+    let is_decrypt = matches.get_flag("decrypt");
+    let is_encrypt = matches.get_flag("encrypt");
+
+    if is_decrypt == is_encrypt {
+        eprintln!("Error: You must specify either --encrypt (-e) or --decrypt (-d).");
         return;
     }
 
-    let mode = &args[1];
-    let input_file = &args[2];
-    let output_file = &args[3];
-    let original_format = if mode == "decrypt" {
-        if args.len() < 5 {
-            eprintln!("Error: Missing original format for decryption.");
-            return;
-        }
-        &args[4]
-    } else {
-        ""
-    };
+    let input_file = matches.get_one::<String>("input").unwrap();
+    let output_file = matches.get_one::<String>("output").unwrap();
+    let original_format = matches.get_one::<String>("format").map(|s| s.as_str()).unwrap_or("");
+
+    if is_decrypt && original_format.is_empty() {
+        eprintln!("Error: Original format is required for decryption.");
+        return;
+    }
 
     // Prompt the user for the secret twice
     print!("Enter your secret: ");
@@ -133,31 +173,25 @@ fn main() {
         return;
     }
 
-    match mode.as_str() {
-        "encrypt" => {
-            match encrypt_image(input_file, output_file, &encryption_key_bytes[..32].try_into().unwrap()) {
-                Ok(original_format) => {
-                    println!("File encrypted successfully. Original format: {}", original_format);
-                }
-                Err(e) => {
-                    eprintln!("Error encrypting file: {}", e);
-                }
+    if is_encrypt {
+        match encrypt_image(input_file, output_file, &encryption_key_bytes[..32].try_into().unwrap()) {
+            Ok(original_format) => {
+                println!("File encrypted successfully. Original format: {}", original_format);
+            }
+            Err(e) => {
+                eprintln!("Error encrypting file: {}", e);
             }
         }
-        "decrypt" => {
-            if let Err(e) = decrypt_image(
-                input_file,
-                output_file,
-                &encryption_key_bytes[..32].try_into().unwrap(),
-                original_format,
-            ) {
-                eprintln!("Error decrypting file: {}", e);
-            } else {
-                println!("File decrypted successfully to: {}", output_file);
-            }
-        }
-        _ => {
-            eprintln!("Error: Invalid mode '{}'. Use 'encrypt' or 'decrypt'.", mode);
+    } else if is_decrypt {
+        if let Err(e) = decrypt_image(
+            input_file,
+            output_file,
+            &encryption_key_bytes[..32].try_into().unwrap(),
+            original_format,
+        ) {
+            eprintln!("Error decrypting file: {}", e);
+        } else {
+            println!("File decrypted successfully to: {}", output_file);
         }
     }
 }
