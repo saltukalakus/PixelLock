@@ -89,12 +89,19 @@ fn detect_file_format(file_path: &str) -> Option<&'static str> {
     }
 }
 
+fn derive_encryption_key(secret: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(secret);
+    let hash_result = hasher.finalize();
+    hash_result[..32].try_into().expect("Hash result should be 32 bytes")
+}
+
 fn main() {
     // Define CLI arguments using `clap`
     let matches = Command::new("PixelLock")
         .version("1.0")
-        .author("Your Name")
-        .about("Encrypts and decrypts image files")
+        .author("Saltuk Alakus")
+        .about("Encrypts and decrypts images in JPEG, PNG or GIF using AES-256-CBC")
         .arg(
             Arg::new("decrypt")
                 .short('d')
@@ -139,6 +146,11 @@ fn main() {
     let input_file = matches.get_one::<String>("input").unwrap();
     let output_file = matches.get_one::<String>("output").unwrap();
 
+    if !Path::new(input_file).exists() {
+        eprintln!("Error: Input file '{}' not found.", input_file);
+        return;
+    }
+    
     // Prompt the user for the secret twice
     print!("Enter your secret: ");
     io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
@@ -154,17 +166,10 @@ fn main() {
         return;
     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(secret1);
-    let encryption_key_bytes = hasher.finalize();
-
-    if !Path::new(input_file).exists() {
-        eprintln!("Error: Input file '{}' not found.", input_file);
-        return;
-    }
+    let encryption_key_bytes = derive_encryption_key(&secret1);
 
     if is_encrypt {
-        match encrypt_image(input_file, output_file, &encryption_key_bytes[..32].try_into().unwrap()) {
+        match encrypt_image(input_file, output_file, &encryption_key_bytes) {
             Ok(original_format) => {
                 println!("File encrypted successfully. Original format: {}", original_format);
             }
@@ -173,11 +178,7 @@ fn main() {
             }
         }
     } else if is_decrypt {
-        if let Err(e) = decrypt_image(
-            input_file,
-            output_file,
-            &encryption_key_bytes[..32].try_into().unwrap(),
-        ) {
+        if let Err(e) = decrypt_image(input_file, output_file, &encryption_key_bytes) {
             eprintln!("Error decrypting file: {}", e);
         } else {
             let output_path = Path::new(output_file);
