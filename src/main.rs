@@ -3,7 +3,8 @@ use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 use image::{io::Reader as ImageReader, ImageError, ImageFormat};
 use rand::{rngs::OsRng, RngCore};
-use std::{fs, io::Cursor, path::Path};
+use sha2::{Digest, Sha256};
+use std::{env, fs, io::Cursor, path::Path};
 
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
@@ -80,9 +81,17 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 }
 
 fn main() {
-    let mut encryption_key_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut encryption_key_bytes);
-    println!("Generated AES Key (hex): {}", hex::encode(&encryption_key_bytes));
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: {} <secret-string>", args[0]);
+        return;
+    }
+
+    let secret = &args[1];
+    let mut hasher = Sha256::new();
+    hasher.update(secret);
+    let encryption_key_bytes = hasher.finalize();
 
     let input_img = "my_secret_image.jpeg";
     let encrypted_img_output = "my_secret_image.enc";
@@ -97,12 +106,12 @@ fn main() {
         }
     }
 
-    match encrypt_image(input_img, encrypted_img_output, &encryption_key_bytes) {
+    match encrypt_image(input_img, encrypted_img_output, &encryption_key_bytes[..32].try_into().unwrap()) {
         Ok(original_format) => {
             if let Err(e) = decrypt_image(
                 encrypted_img_output,
                 decrypted_img_output,
-                &encryption_key_bytes,
+                &encryption_key_bytes[..32].try_into().unwrap(),
                 &original_format,
             ) {
                 eprintln!("Error decrypting image: {}", e);
