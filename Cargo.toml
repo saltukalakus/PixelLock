@@ -1,0 +1,13 @@
+[package]
+name = "secure-image"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aes = "0.8"
+cbc = "0.1"
+cipher = "0.4"
+generic-array = "0.14"
+image = "0.24"
+rand = "0.8"
+hex = "0.4"
