@@ -1,6 +1,6 @@
 ## PixelLock
 
-![PixelLock](PixelLock.jpg)
+![PixelLock](./PixelLock.jpg)
 
 PixelLock is a command-line tool for encrypting and decrypting image files using AES-256 encryption in CBC mode. It allows you to securely encrypt image files and later decrypt them using a secret key.
 
