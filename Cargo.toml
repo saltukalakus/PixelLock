@@ -10,3 +10,4 @@ image = "0.24"   # Required for image processing
 rand = "0.8"     # Required for generating random nonces
 clap = "4.0"     # Required for command-line argument parsing
 rpassword = "5.0" # Required for securely reading passwords
+zeroize = { version = "1.7", features = ["alloc"] } # For secure secret handling

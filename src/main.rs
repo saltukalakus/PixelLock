@@ -7,6 +7,7 @@ use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
 use argon2::{Argon2, PasswordHasher}; 
 use argon2::password_hash::{SaltString};
+use zeroize::Zeroizing; // Added for secure secret handling
 
 const SALT_STRING_LEN: usize = 22; 
 const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
@@ -14,7 +15,7 @@ const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
 fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P,
     output_encrypted_path: P,
-    secret: &str,
+    secret: &Zeroizing<String>, // Changed type
 ) -> Result<String, ImageError> {
     let img = ImageReader::open(&input_image_path)?.decode()?;
     let original_format = input_image_path
@@ -40,7 +41,7 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     let img_bytes = img_byte_array.into_inner();
 
     let salt: SaltString = SaltString::generate(&mut OsRng); // Generate a random salt
-    let derived_key = derive_encryption_key_with_salt(secret, &salt); // Derive key using this salt
+    let derived_key = derive_encryption_key_with_salt(&*secret, &salt); // Dereference secret
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce_bytes: [u8; NONCE_STRING_LEN] = OsRng.gen(); // Generate a 96-bit nonce
@@ -67,7 +68,7 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_encrypted_path: P,
     output_decrypted_path: P,
-    secret: &str, 
+    secret: &Zeroizing<String>, // Changed type
 ) -> Result<(), ImageError> {
     let encrypted_file_data = fs::read(&input_encrypted_path)?;
     if encrypted_file_data.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
@@ -86,7 +87,7 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         image::error::ImageFormatHint::Unknown, format!("Invalid salt format: {}", e)
     )))?;
 
-    let derived_key = derive_encryption_key_with_salt(secret, &salt);
+    let derived_key = derive_encryption_key_with_salt(&*secret, &salt); // Dereference secret
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce = Nonce::from_slice(nonce_bytes);
@@ -178,32 +179,33 @@ fn validate_password_complexity(password: &str) -> bool {
     true
 }
 
-fn prompt_and_validate_secret(is_encryption_mode: bool) -> String {
+fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> { // Changed return type
     if is_encryption_mode {
         loop {
             print!("Enter your new secret: ");
             io::stdout().flush().unwrap();
-            let secret1 = read_password().expect("Failed to read secret");
+            let secret1_plain = read_password().expect("Failed to read secret");
 
-            if !validate_password_complexity(&secret1) {
+            if !validate_password_complexity(&secret1_plain) {
                 println!("Please try again, ensuring the password meets all complexity requirements.");
                 continue;
             }
 
             print!("Re-enter your new secret: ");
             io::stdout().flush().unwrap();
-            let secret2 = read_password().expect("Failed to read secret");
+            let secret2_plain = read_password().expect("Failed to read secret");
 
-            if secret1 != secret2 {
+            if secret1_plain != secret2_plain {
                 eprintln!("Error: Secrets do not match. Please try again.");
                 continue;
             }
-            return secret1;
+            return Zeroizing::new(secret1_plain);
         }
     } else {
         print!("Enter your secret: ");
         io::stdout().flush().unwrap();
-        read_password().expect("Failed to read secret")
+        let secret_plain = read_password().expect("Failed to read secret");
+        Zeroizing::new(secret_plain)
     }
 }
 
@@ -264,7 +266,7 @@ fn main() {
 
     validate_file_exists(input_file);
 
-    let encryption_secret = prompt_and_validate_secret(is_encrypt); // Pass mode flag
+    let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
 
     if is_encrypt {
         match encrypt_image(input_file, output_file, &encryption_secret) {
