@@ -1,6 +1,6 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
-PixelLock allows you to securely store your pictures and then later retrieve them using a secret key only you know.
+PixelLock allows you to securely store your pictures and then later retrieve them using a secret only you know.
 
 It is a command-line tool for encrypting and decrypting image files using AES-256-GCM. Argon2 is used to hash the secret. The tool stores the encrypted file in a readable Base64-encoded format.
 

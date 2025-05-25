@@ -149,21 +149,59 @@ fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> [u8; 32] 
     key_bytes[..32].try_into().expect("Derived key should be 32 bytes")
 }
 
-fn prompt_and_validate_secret() -> String {
-    print!("Enter your secret: ");
-    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-    let secret1 = read_password().expect("Failed to read secret");
-
-    print!("Re-enter your secret: ");
-    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-    let secret2 = read_password().expect("Failed to read secret");
-
-    if secret1 != secret2 {
-        eprintln!("Error: Secrets do not match. Please try again.");
-        std::process::exit(1);
+fn validate_password_complexity(password: &str) -> bool {
+    if password.len() < 16 {
+        eprintln!("Error: Password must be at least 16 characters long.");
+        return false;
     }
+    let has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
+    let has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    let has_symbol = password.chars().any(|c| c.is_ascii_punctuation() || c.is_ascii_graphic() && !c.is_ascii_alphanumeric());
 
-    secret1 // Return the secret as a string
+    if !has_uppercase {
+        eprintln!("Error: Password must contain at least one uppercase letter.");
+        return false;
+    }
+    if !has_lowercase {
+        eprintln!("Error: Password must contain at least one lowercase letter.");
+        return false;
+    }
+    if !has_digit {
+        eprintln!("Error: Password must contain at least one digit.");
+        return false;
+    }
+    if !has_symbol {
+        eprintln!("Error: Password must contain at least one symbol (e.g., !@#$%^&*).");
+        return false;
+    }
+    true
+}
+
+fn prompt_and_validate_secret() -> String {
+    loop {
+        print!("Enter your secret: ");
+        io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+        let secret1 = read_password().expect("Failed to read secret");
+
+        if !validate_password_complexity(&secret1) {
+            // Error messages are printed by validate_password_complexity
+            // Ask to re-enter without exiting immediately, or exit if preferred.
+            // For now, let's allow re-entry.
+            println!("Please try again, ensuring the password meets all complexity requirements.");
+            continue;
+        }
+
+        print!("Re-enter your secret: ");
+        io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+        let secret2 = read_password().expect("Failed to read secret");
+
+        if secret1 != secret2 {
+            eprintln!("Error: Secrets do not match. Please try again.");
+            continue; // Allow re-entry
+        }
+        return secret1; // Return the secret as a string
+    }
 }
 
 fn validate_file_exists(file_path: &str) {
