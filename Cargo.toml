@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+argon2 = "0.4" # Required for Argon2 key derivation
 aes-gcm = "0.10" # Required for AES-GCM encryption/decryption
 image = "0.24"   # Required for image processing
 rand = "0.8"     # Required for generating random nonces
-sha2 = "0.10"    # Required for hashing secrets
 clap = "4.0"     # Required for command-line argument parsing
 rpassword = "5.0" # Required for securely reading passwords

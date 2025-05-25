@@ -1,16 +1,17 @@
-use aes_gcm::{Aes256Gcm, Key, Nonce}; // AES-GCM imports
-use aes_gcm::aead::{Aead, KeyInit}; // Corrected import for `KeyInit`
+use aes_gcm::{Aes256Gcm, Key, Nonce}; 
+use aes_gcm::aead::{Aead, KeyInit}; 
 use image::{io::Reader as ImageReader, ImageError, ImageFormat, ImageOutputFormat};
-use rand::{rngs::OsRng, Rng}; // Corrected import for `Rng`
-use sha2::{Digest, Sha256};
+use rand::{rngs::OsRng, Rng}; 
 use std::{fs, io::{self, Cursor, Write}, path::Path};
 use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
+use argon2::{Argon2, PasswordHasher}; 
+use argon2::password_hash::{SaltString};
 
 fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P,
     output_encrypted_path: P,
-    key: &[u8; 32],
+    secret: &str,
 ) -> Result<String, ImageError> {
     let img = ImageReader::open(&input_image_path)?.decode()?;
     let original_format = input_image_path
@@ -35,7 +36,10 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     }
     let img_bytes = img_byte_array.into_inner();
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key)); // Explicitly specify the key type
+    let salt = SaltString::generate(&mut OsRng); // Generate a random salt
+    let derived_key = derive_encryption_key_with_salt(secret, &salt); // Derive key using this salt
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce_bytes: [u8; 12] = OsRng.gen(); // Generate a 96-bit nonce
     let nonce = Nonce::from_slice(&nonce_bytes);
     let encrypted_data = cipher.encrypt(nonce, img_bytes.as_ref())
@@ -44,8 +48,11 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
             "Encryption failed".to_string(),
         )))?;
 
+    let salt_bytes_to_store = salt.as_bytes(); // These are 22 bytes for a 16-byte raw salt B64Unpadded
+
     let mut output_bytes = Vec::new();
-    output_bytes.extend_from_slice(&nonce_bytes);
+    output_bytes.extend_from_slice(salt_bytes_to_store); // Store the salt string bytes
+    output_bytes.extend_from_slice(&nonce_bytes); // Store the nonce
     output_bytes.extend_from_slice(&encrypted_data);
 
     fs::write(&output_encrypted_path, output_bytes)?;
@@ -56,17 +63,34 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_encrypted_path: P,
     output_decrypted_path: P,
-    key: &[u8; 32],
+    secret: &str, 
 ) -> Result<(), ImageError> {
-    let encrypted_data = fs::read(&input_encrypted_path)?;
-    let (nonce_bytes, ciphertext) = encrypted_data.split_at(12); // Split nonce and ciphertext
+    let encrypted_file_data = fs::read(&input_encrypted_path)?;
+    const SALT_STRING_LEN: usize = 22; 
+    if encrypted_file_data.len() < SALT_STRING_LEN + 12 { // 12 for nonce
+        return Err(ImageError::Decoding(image::error::DecodingError::new(
+            image::error::ImageFormatHint::Unknown,
+            "Encrypted file is too short".to_string(),
+        )));
+    }
+    let (salt_string_bytes, rest) = encrypted_file_data.split_at(SALT_STRING_LEN);
+    let (nonce_bytes, ciphertext) = rest.split_at(12);
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key)); // Explicitly specify the key type
+    let salt_str = std::str::from_utf8(salt_string_bytes).map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
+        image::error::ImageFormatHint::Unknown, "Invalid salt UTF-8".to_string()
+    )))?;
+    let salt = SaltString::new(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
+        image::error::ImageFormatHint::Unknown, format!("Invalid salt format: {}", e)
+    )))?;
+
+    let derived_key = derive_encryption_key_with_salt(secret, &salt);
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce = Nonce::from_slice(nonce_bytes);
     let decrypted_data = cipher.decrypt(nonce, ciphertext)
         .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
             image::error::ImageFormatHint::Unknown,
-            "Decryption failed".to_string(),
+            "Decryption failed (possibly wrong secret or corrupted file)".to_string(),
         )))?;
 
     if let Some(format) = detect_file_format(&decrypted_data) {
@@ -109,15 +133,20 @@ fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn derive_encryption_key(secret: &str) -> [u8; 32] {
-    // Ensure the hash result is exactly 32 bytes
-    let mut hasher = Sha256::new();
-    hasher.update(secret);
-    let hash_result = hasher.finalize();
-    hash_result[..32].try_into().expect("Hash result should be 32 bytes")
+fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> [u8; 32] {
+    let argon2 = Argon2::default(); // Use the default Argon2 configuration
+
+    let password_hash = argon2
+        .hash_password(secret.as_bytes(), salt)
+        .expect("Failed to hash password");
+
+    let derived_key = password_hash.hash.expect("Hash missing in password hash");
+    let key_bytes = derived_key.as_bytes();
+
+    key_bytes[..32].try_into().expect("Derived key should be 32 bytes")
 }
 
-fn prompt_and_validate_secret() -> [u8; 32] {
+fn prompt_and_validate_secret() -> String {
     print!("Enter your secret: ");
     io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
     let secret1 = read_password().expect("Failed to read secret");
@@ -131,7 +160,7 @@ fn prompt_and_validate_secret() -> [u8; 32] {
         std::process::exit(1);
     }
 
-    derive_encryption_key(&secret1)
+    secret1 // Return the secret as a string
 }
 
 fn validate_file_exists(file_path: &str) {
@@ -142,7 +171,6 @@ fn validate_file_exists(file_path: &str) {
 }
 
 fn main() {
-    // Define CLI arguments using `clap`
     let matches = Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
@@ -179,7 +207,6 @@ fn main() {
         )
         .get_matches();
 
-    // Determine mode (encrypt or decrypt)
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
 
@@ -193,10 +220,10 @@ fn main() {
 
     validate_file_exists(input_file);
 
-    let encryption_key_bytes = prompt_and_validate_secret();
+    let encryption_secret = prompt_and_validate_secret();
 
     if is_encrypt {
-        match encrypt_image(input_file, output_file, &encryption_key_bytes) {
+        match encrypt_image(input_file, output_file, &encryption_secret) {
             Ok(original_format) => {
                 println!("File encrypted successfully. Original format: {}", original_format);
             }
@@ -205,7 +232,7 @@ fn main() {
             }
         }
     } else if is_decrypt {
-        if let Err(e) = decrypt_image(input_file, output_file, &encryption_key_bytes) {
+        if let Err(e) = decrypt_image(input_file, output_file, &encryption_secret) {
             eprintln!("Error decrypting file: {}", e);
         }
     }
