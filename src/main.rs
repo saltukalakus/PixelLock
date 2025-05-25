@@ -26,6 +26,7 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         .to_string();
 
     let mut img_byte_array = Cursor::new(Vec::new());
+    
     if original_format == "png" {
         img.write_to(&mut img_byte_array, ImageOutputFormat::Png)?;
     } else if original_format == "bmp"  {
@@ -135,6 +136,30 @@ fn derive_encryption_key(secret: &str) -> [u8; 32] {
     hash_result[..32].try_into().expect("Hash result should be 32 bytes")
 }
 
+fn prompt_and_validate_secret() -> [u8; 32] {
+    print!("Enter your secret: ");
+    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+    let secret1 = read_password().expect("Failed to read secret");
+
+    print!("Re-enter your secret: ");
+    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
+    let secret2 = read_password().expect("Failed to read secret");
+
+    if secret1 != secret2 {
+        eprintln!("Error: Secrets do not match. Please try again.");
+        std::process::exit(1);
+    }
+
+    derive_encryption_key(&secret1)
+}
+
+fn validate_file_exists(file_path: &str) {
+    if !Path::new(file_path).exists() {
+        eprintln!("Error: Input file '{}' not found.", file_path);
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     // Define CLI arguments using `clap`
     let matches = Command::new("PixelLock")
@@ -185,27 +210,9 @@ fn main() {
     let input_file = matches.get_one::<String>("input").unwrap();
     let output_file = matches.get_one::<String>("output").unwrap();
 
-    if !Path::new(input_file).exists() {
-        eprintln!("Error: Input file '{}' not found.", input_file);
-        return;
-    }
+    validate_file_exists(input_file);
 
-    // Prompt the user for the secret twice
-    print!("Enter your secret: ");
-    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-    let secret1 = read_password().expect("Failed to read secret");
-
-    print!("Re-enter your secret: ");
-    io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-    let secret2 = read_password().expect("Failed to read secret");
-
-    // Validate that both secrets match
-    if secret1 != secret2 {
-        eprintln!("Error: Secrets do not match. Please try again.");
-        return;
-    }
-
-    let encryption_key_bytes = derive_encryption_key(&secret1);
+    let encryption_key_bytes = prompt_and_validate_secret();
 
     if is_encrypt {
         match encrypt_image(input_file, output_file, &encryption_key_bytes) {
