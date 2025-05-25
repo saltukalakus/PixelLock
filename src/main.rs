@@ -1,7 +1,7 @@
 use aes::Aes256;
 use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
-use image::{io::Reader as ImageReader, ImageError, ImageFormat};
+use image::{io::Reader as ImageReader, ImageError, ImageFormat, ImageOutputFormat};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Cursor, Write}, path::Path};
@@ -28,7 +28,18 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         .to_string();
 
     let mut img_byte_array = Cursor::new(Vec::new());
-    img.write_to(&mut img_byte_array, ImageFormat::Png)?;
+    if original_format == "png" {
+        img.write_to(&mut img_byte_array, ImageOutputFormat::Png)?;
+    } else if original_format == "bmp"  {
+        img.write_to(&mut img_byte_array, ImageFormat::Bmp)?;
+    } else if original_format == "jpeg" || original_format == "jpg" {
+        img.write_to(&mut img_byte_array, ImageOutputFormat::Jpeg(100))?;
+    } else {
+        return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
+            image::error::ImageFormatHint::Unknown,
+            image::error::UnsupportedErrorKind::GenericFeature("Unsupported image format".to_string()),
+        )));
+    }
     let img_bytes = img_byte_array.into_inner();
 
     let mut iv_bytes = [0u8; 16];
@@ -81,9 +92,10 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     let img = ImageReader::new(Cursor::new(decrypted_data))
         .with_guessed_format()?
         .decode()?;
-    img.save(&output_decrypted_path)?;
+    let output_path = output_decrypted_path.as_ref();
+    img.save(&output_path)?;
 
-    println!("Image decrypted successfully to: {:?}", output_decrypted_path);
+    println!("Image decrypted successfully to: {:?}", output_path);
     Ok(())
 }
 
@@ -95,7 +107,7 @@ fn detect_file_format(file_path: &str) -> Option<&'static str> {
     match &buffer {
         [0xFF, 0xD8, 0xFF, ..] => Some("jpeg"),
         [0x89, b'P', b'N', b'G', ..] => Some("png"),
-        [b'G', b'I', b'F', 0x38, 0x39, 0x61, ..] => Some("gif"),
+        [b'B', b'M', ..] => Some("bmp"),
         _ => None,
     }
 }
@@ -113,7 +125,7 @@ fn main() {
     let matches = Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images in JPEG, PNG, or GIF using AES-256-CBC")
+        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-CBC")
         .arg(
             Arg::new("decrypt")
                 .short('d')
