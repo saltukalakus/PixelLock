@@ -1,5 +1,5 @@
 use std::{fs, io::{self, Write}, path::{Path}};
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, ArgMatches};
 use rpassword::read_password;
 use zeroize::Zeroizing;
 
@@ -71,8 +71,8 @@ fn validate_file_exists(file_path: &str) {
     }
 }
 
-fn main() {
-    let matches = Command::new("PixelLock")
+fn build_cli_app() -> ArgMatches {
+    Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
         .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-GCM. \nWith -f, processes all files in a folder.")
@@ -113,7 +113,11 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Process all files in the input folder (non-recursive). -i becomes input folder, -o becomes output folder."),
         )
-        .get_matches();
+        .get_matches()
+}
+
+fn main() {
+    let matches = build_cli_app();
 
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
