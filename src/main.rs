@@ -8,6 +8,9 @@ use rpassword::read_password;
 use argon2::{Argon2, PasswordHasher}; 
 use argon2::password_hash::{SaltString};
 
+const SALT_STRING_LEN: usize = 22; 
+const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
+
 fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P,
     output_encrypted_path: P,
@@ -36,11 +39,11 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     }
     let img_bytes = img_byte_array.into_inner();
 
-    let salt = SaltString::generate(&mut OsRng); // Generate a random salt
+    let salt: SaltString = SaltString::generate(&mut OsRng); // Generate a random salt
     let derived_key = derive_encryption_key_with_salt(secret, &salt); // Derive key using this salt
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
-    let nonce_bytes: [u8; 12] = OsRng.gen(); // Generate a 96-bit nonce
+    let nonce_bytes: [u8; NONCE_STRING_LEN] = OsRng.gen(); // Generate a 96-bit nonce
     let nonce = Nonce::from_slice(&nonce_bytes);
     let encrypted_data = cipher.encrypt(nonce, img_bytes.as_ref())
         .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
@@ -49,6 +52,7 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         )))?;
 
     let salt_bytes_to_store = salt.as_bytes(); // These are 22 bytes for a 16-byte raw salt B64Unpadded
+    assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Generated salt string length does not match expected SALT_STRING_LEN.");
 
     let mut output_bytes = Vec::new();
     output_bytes.extend_from_slice(salt_bytes_to_store); // Store the salt string bytes
@@ -66,15 +70,14 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     secret: &str, 
 ) -> Result<(), ImageError> {
     let encrypted_file_data = fs::read(&input_encrypted_path)?;
-    const SALT_STRING_LEN: usize = 22; 
-    if encrypted_file_data.len() < SALT_STRING_LEN + 12 { // 12 for nonce
+    if encrypted_file_data.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
         return Err(ImageError::Decoding(image::error::DecodingError::new(
             image::error::ImageFormatHint::Unknown,
             "Encrypted file is too short".to_string(),
         )));
     }
     let (salt_string_bytes, rest) = encrypted_file_data.split_at(SALT_STRING_LEN);
-    let (nonce_bytes, ciphertext) = rest.split_at(12);
+    let (nonce_bytes, ciphertext) = rest.split_at(NONCE_STRING_LEN);
 
     let salt_str = std::str::from_utf8(salt_string_bytes).map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
         image::error::ImageFormatHint::Unknown, "Invalid salt UTF-8".to_string()
