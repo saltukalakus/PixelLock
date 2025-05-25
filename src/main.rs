@@ -7,8 +7,6 @@ use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Cursor, Write}, path::Path};
 use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
-use std::fs::File;
-use std::io::Read;
 use base64::{engine::general_purpose, Engine};
 
 type Aes256CbcEnc = Encryptor<Aes256>;
@@ -89,26 +87,43 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         ))
     })?;
 
-    let img = ImageReader::new(Cursor::new(decrypted_data))
-        .with_guessed_format()?
-        .decode()?;
-    let output_path = output_decrypted_path.as_ref();
-    img.save(&output_path)?;
+    if let Some(format) = detect_file_format(decrypted_data) {
+        let output_path = output_decrypted_path.as_ref().with_extension(format);
+        println!("Detected file format: {:?}", format);
 
-    println!("Image decrypted successfully to: {:?}", output_path);
+        let img_format = match format {
+            "jpeg" => ImageFormat::Jpeg,
+            "png" => ImageFormat::Png,
+            "bmp" => ImageFormat::Bmp,
+            _ => return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
+                image::error::ImageFormatHint::Unknown,
+                image::error::UnsupportedErrorKind::GenericFeature("Unsupported image format".to_string()),
+            ))),
+        };
+
+        let img = ImageReader::with_format(Cursor::new(decrypted_data), img_format) // Use associated function
+            .decode()?;
+        img.save(&output_path)?;
+        println!("Image decrypted successfully to: {:?}", output_path);
+    } else {
+        eprintln!("Warning: Could not detect file format. Saving as is.");
+        let output_path = output_decrypted_path.as_ref();
+        fs::write(&output_path, decrypted_data)?;
+        println!("Image decrypted successfully to: {:?}", output_path);
+    }
+
     Ok(())
 }
 
-fn detect_file_format(file_path: &str) -> Option<&'static str> {
-    let mut file = File::open(file_path).ok()?;
-    let mut buffer = [0u8; 8];
-    file.read_exact(&mut buffer).ok()?;
-
-    match &buffer {
-        [0xFF, 0xD8, 0xFF, ..] => Some("jpeg"),
-        [0x89, b'P', b'N', b'G', ..] => Some("png"),
-        [b'B', b'M', ..] => Some("bmp"),
-        _ => None,
+fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
+    if decrypted_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpeg")
+    } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("png")
+    } else if decrypted_data.starts_with(&[b'B', b'M']) {
+        Some("bmp")
+    } else {
+        None
     }
 }
 
@@ -170,6 +185,7 @@ fn main() {
     let input_file = matches.get_one::<String>("input").unwrap();
     let output_file = matches.get_one::<String>("output").unwrap();
 
+    println!("Current working directory: {:?}", std::env::current_dir().unwrap());
     if !Path::new(input_file).exists() {
         eprintln!("Error: Input file '{}' not found.", input_file);
         return;
@@ -204,17 +220,6 @@ fn main() {
     } else if is_decrypt {
         if let Err(e) = decrypt_image(input_file, output_file, &encryption_key_bytes) {
             eprintln!("Error decrypting file: {}", e);
-        } else {
-            let output_path = Path::new(output_file);
-            let output_stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or(output_file);
-
-            if let Some(format) = detect_file_format(output_file) {
-                let new_output_file = format!("{}.{}", output_stem, format);
-                std::fs::rename(output_file, &new_output_file).expect("Failed to rename file");
-                println!("Decrypted file saved as: {}", new_output_file);
-            } else {
-                eprintln!("Warning: Could not detect file format. Output saved as is.");
-            }
         }
     }
 }
