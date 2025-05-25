@@ -185,7 +185,6 @@ fn main() {
     let input_file = matches.get_one::<String>("input").unwrap();
     let output_file = matches.get_one::<String>("output").unwrap();
 
-    println!("Current working directory: {:?}", std::env::current_dir().unwrap());
     if !Path::new(input_file).exists() {
         eprintln!("Error: Input file '{}' not found.", input_file);
         return;
