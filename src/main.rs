@@ -1,16 +1,11 @@
-use aes::Aes256;
-use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use cbc::{Decryptor, Encryptor};
+use aes_gcm::{Aes256Gcm, Key, Nonce}; // AES-GCM imports
+use aes_gcm::aead::{Aead, KeyInit}; // Corrected import for `KeyInit`
 use image::{io::Reader as ImageReader, ImageError, ImageFormat, ImageOutputFormat};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::OsRng, Rng}; // Corrected import for `Rng`
 use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Cursor, Write}, path::Path};
 use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
-use base64::{engine::general_purpose, Engine};
-
-type Aes256CbcEnc = Encryptor<Aes256>;
-type Aes256CbcDec = Decryptor<Aes256>;
 
 fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P,
@@ -26,10 +21,9 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         .to_string();
 
     let mut img_byte_array = Cursor::new(Vec::new());
-    
     if original_format == "png" {
         img.write_to(&mut img_byte_array, ImageOutputFormat::Png)?;
-    } else if original_format == "bmp"  {
+    } else if original_format == "bmp" {
         img.write_to(&mut img_byte_array, ImageFormat::Bmp)?;
     } else if original_format == "jpeg" || original_format == "jpg" {
         img.write_to(&mut img_byte_array, ImageOutputFormat::Jpeg(100))?;
@@ -41,24 +35,20 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     }
     let img_bytes = img_byte_array.into_inner();
 
-    let mut iv_bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut iv_bytes);
-
-    let cipher = Aes256CbcEnc::new(key.into(), &iv_bytes.into());
-    let mut buffer = vec![0u8; img_bytes.len() + 16]; // Allocate buffer with padding space
-    buffer[..img_bytes.len()].copy_from_slice(&img_bytes);
-    let encrypted_data = cipher
-        .encrypt_padded_mut::<Pkcs7>(&mut buffer, img_bytes.len())
-        .unwrap()
-        .to_vec();
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key)); // Explicitly specify the key type
+    let nonce_bytes: [u8; 12] = OsRng.gen(); // Generate a 96-bit nonce
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let encrypted_data = cipher.encrypt(nonce, img_bytes.as_ref())
+        .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
+            image::error::ImageFormatHint::Unknown,
+            "Encryption failed".to_string(),
+        )))?;
 
     let mut output_bytes = Vec::new();
-    output_bytes.extend_from_slice(&iv_bytes);
+    output_bytes.extend_from_slice(&nonce_bytes);
     output_bytes.extend_from_slice(&encrypted_data);
 
-    // Encode the encrypted data in Base64
-    let base64_encoded = general_purpose::STANDARD.encode(output_bytes);
-    fs::write(&output_encrypted_path, base64_encoded)?;
+    fs::write(&output_encrypted_path, output_bytes)?;
     println!("Image encrypted successfully to: {:?}", output_encrypted_path);
     Ok(original_format)
 }
@@ -68,27 +58,18 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_decrypted_path: P,
     key: &[u8; 32],
 ) -> Result<(), ImageError> {
-    // Read the Base64-encoded encrypted data
-    let base64_encoded_data = fs::read_to_string(&input_encrypted_path)?;
-    let full_encrypted_data = general_purpose::STANDARD.decode(base64_encoded_data).map_err(|_| {
-        ImageError::Decoding(image::error::DecodingError::new(
+    let encrypted_data = fs::read(&input_encrypted_path)?;
+    let (nonce_bytes, ciphertext) = encrypted_data.split_at(12); // Split nonce and ciphertext
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key)); // Explicitly specify the key type
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let decrypted_data = cipher.decrypt(nonce, ciphertext)
+        .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
             image::error::ImageFormatHint::Unknown,
-            "Failed to decode Base64 data".to_string(),
-        ))
-    })?;
+            "Decryption failed".to_string(),
+        )))?;
 
-    let (iv_bytes, encrypted_data) = full_encrypted_data.split_at(16);
-
-    let cipher = Aes256CbcDec::new(key.into(), iv_bytes.into());
-    let mut encrypted_data_mut = encrypted_data.to_vec();
-    let decrypted_data = cipher.decrypt_padded_mut::<Pkcs7>(&mut encrypted_data_mut).map_err(|_| {
-        ImageError::Decoding(image::error::DecodingError::new(
-            image::error::ImageFormatHint::Unknown,
-            "Failed to decrypt data".to_string(),
-        ))
-    })?;
-
-    if let Some(format) = detect_file_format(decrypted_data) {
+    if let Some(format) = detect_file_format(&decrypted_data) {
         let output_path = output_decrypted_path.as_ref().with_extension(format);
         println!("Detected file format: {:?}", format);
 
@@ -102,7 +83,7 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
             ))),
         };
 
-        let img = ImageReader::with_format(Cursor::new(decrypted_data), img_format) // Use associated function
+        let img = ImageReader::with_format(Cursor::new(decrypted_data), img_format)
             .decode()?;
         img.save(&output_path)?;
         println!("Image decrypted successfully to: {:?}", output_path);
@@ -165,7 +146,7 @@ fn main() {
     let matches = Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-CBC")
+        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-GCM")
         .arg(
             Arg::new("decrypt")
                 .short('d')
