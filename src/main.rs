@@ -116,6 +116,96 @@ fn build_cli_app() -> ArgMatches {
         .get_matches()
 }
 
+fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>) {
+    let input_dir = Path::new(input_dir_str);
+    let output_dir = Path::new(output_dir_str);
+
+    if !input_dir.is_dir() {
+        eprintln!("Error: Input path '{}' is not a directory. Use -f for folder operations.", input_dir_str);
+        std::process::exit(1);
+    }
+
+    if !output_dir.exists() {
+        if let Err(e) = fs::create_dir_all(&output_dir) {
+            eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
+            std::process::exit(1);
+        }
+        println!("Created output directory: {:?}", output_dir);
+    } else if !output_dir.is_dir() {
+        eprintln!("Error: Output path '{}' exists but is not a directory.", output_dir_str);
+        std::process::exit(1);
+    }
+
+    match fs::read_dir(input_dir) {
+        Ok(entries) => {
+            let mut files_processed_successfully = 0;
+            let mut files_failed_to_process = 0;
+            let mut files_skipped_extension = 0;
+            println!("\nStarting folder processing...");
+
+            for entry_result in entries {
+                match entry_result {
+                    Ok(entry) => {
+                        let current_input_file_path = entry.path();
+                        if current_input_file_path.is_file() {
+                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            let lower_extension = extension.to_lowercase();
+                            
+                            if !["jpeg", "jpg", "bmp", "png"].contains(&lower_extension.as_str()) {
+                                files_skipped_extension += 1;
+                                continue;
+                            }
+
+                            let file_name = match current_input_file_path.file_name() {
+                                Some(name) => name,
+                                None => {
+                                    eprintln!("Warning: Could not get file name for {:?}, skipping.", current_input_file_path);
+                                    files_failed_to_process += 1;
+                                    continue;
+                                }
+                            };
+                            let current_output_file_path = output_dir.join(file_name);
+
+                            print!("Processing {:?} -> {:?} ... ", current_input_file_path, current_output_file_path);
+                            io::stdout().flush().unwrap();
+
+                            let operation_result = if is_encrypt {
+                                utils::encrypt_image(&current_input_file_path, &current_output_file_path, secret).map(|_| ())
+                            } else {
+                                utils::decrypt_image(&current_input_file_path, &current_output_file_path, secret)
+                            };
+
+                            match operation_result {
+                                Ok(_) => {
+                                    files_processed_successfully += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("\nError processing file {:?}: {}", current_input_file_path, e);
+                                    files_failed_to_process += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading a directory entry: {}", e);
+                        files_failed_to_process += 1; 
+                    }
+                }
+            }
+            println!("\nFolder processing summary:");
+            println!("  Files successfully processed: {}", files_processed_successfully);
+            println!("  Files failed to process: {}", files_failed_to_process);
+            if files_skipped_extension > 0 {
+                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
     let matches = build_cli_app();
 
@@ -134,93 +224,7 @@ fn main() {
     let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
 
     if is_folder_mode {
-        let input_dir = Path::new(input_arg_str);
-        let output_dir = Path::new(output_arg_str);
-
-        if !input_dir.is_dir() {
-            eprintln!("Error: Input path '{}' is not a directory. Use -f for folder operations.", input_arg_str);
-            std::process::exit(1);
-        }
-
-        if !output_dir.exists() {
-            if let Err(e) = fs::create_dir_all(&output_dir) {
-                eprintln!("Error: Could not create output directory '{}': {}", output_arg_str, e);
-                std::process::exit(1);
-            }
-            println!("Created output directory: {:?}", output_dir);
-        } else if !output_dir.is_dir() {
-            eprintln!("Error: Output path '{}' exists but is not a directory.", output_arg_str);
-            std::process::exit(1);
-        }
-
-        match fs::read_dir(input_dir) {
-            Ok(entries) => {
-                let mut files_processed_successfully = 0;
-                let mut files_failed_to_process = 0;
-                let mut files_skipped_extension = 0;
-                println!("\nStarting folder processing...");
-
-                for entry_result in entries {
-                    match entry_result {
-                        Ok(entry) => {
-                            let current_input_file_path = entry.path();
-                            if current_input_file_path.is_file() {
-                                let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                                let lower_extension = extension.to_lowercase();
-                                
-                                if !["jpeg", "jpg", "bmp", "png"].contains(&lower_extension.as_str()) {
-                                    files_skipped_extension += 1;
-                                    continue;
-                                }
-
-                                let file_name = match current_input_file_path.file_name() {
-                                    Some(name) => name,
-                                    None => {
-                                        eprintln!("Warning: Could not get file name for {:?}, skipping.", current_input_file_path);
-                                        files_failed_to_process += 1;
-                                        continue;
-                                    }
-                                };
-                                let current_output_file_path = output_dir.join(file_name);
-
-                                print!("Processing {:?} -> {:?} ... ", current_input_file_path, current_output_file_path);
-                                io::stdout().flush().unwrap();
-
-                                let operation_result = if is_encrypt {
-                                    utils::encrypt_image(&current_input_file_path, &current_output_file_path, &encryption_secret).map(|_| ())
-                                } else {
-                                    utils::decrypt_image(&current_input_file_path, &current_output_file_path, &encryption_secret)
-                                };
-
-                                match operation_result {
-                                    Ok(_) => {
-                                        files_processed_successfully += 1;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("\nError processing file {:?}: {}", current_input_file_path, e);
-                                        files_failed_to_process += 1;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Error reading a directory entry: {}", e);
-                            files_failed_to_process += 1; 
-                        }
-                    }
-                }
-                println!("\nFolder processing summary:");
-                println!("  Files successfully processed: {}", files_processed_successfully);
-                println!("  Files failed to process: {}", files_failed_to_process);
-                if files_skipped_extension > 0 {
-                    println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: Could not read input directory '{}': {}", input_arg_str, e);
-                std::process::exit(1);
-            }
-        }
+        process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret);
     } else {
         validate_file_exists(input_arg_str);
         if is_encrypt {

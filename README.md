@@ -1,10 +1,10 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
-PixelLock allows you to securely store your pictures and then later retrieve them using a secret only you know.
+PixelLock encrypts your pictures with modern encryption algorithms. It helps to enhance privacy and provide an additional layer of security.
 
-It is a command-line tool for encrypting and decrypting image files using AES-256-GCM. Argon2 is used to hash the secret. The tool stores the encrypted file in a readable Base64-encoded format.
+It is a command-line tool for encrypting and decrypting image files using AES-256-GCM. Argon2 is used to hash the secret. The tool stores the encrypted file in binary format, typically with a `.txt` extension.
 
-File type detection is supported for JPEG, PNG, and BMP. The type is extracted from the encrypted file after decryption. This is handy as you may not know the file type of an encrypted file.
+Image formats currently supported are JPEG, PNG, and BMP. The image type is extracted from the encrypted file after decryption. This is handy as you may not know the file type of an encrypted file.
 
 ### Build Requirements
 - Rust (1.87.0 or later)
