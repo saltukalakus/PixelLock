@@ -1,8 +1,10 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
-PixelLock is a command-line tool for encrypting and decrypting image files using AES-256 encryption in CBC mode. It allows you to securely encrypt image files and later decrypt them using a secret key.
+PixelLock allows you to securely store your pictures and then later retrieve them using a secret key only you know.
 
-The file format detection is supported for JPEG, PNG, and GIF. The file type is appended to the output file during decryption, so you don't necessarily need to pass it. See the example below.
+It is a command-line tool for encrypting and decrypting image files using AES-256 encryption in CBC mode. It stores the encrypted file in a readable BASE64-encoded format.
+
+The file type detection is supported for JPEG, PNG, and GIF. The type is extracted from the encrypted file after decryption. That is handy as you may not know the file type of an encrypted file.
 
 ### Build Requirements
 - Rust (1.87.0 or later)
@@ -32,21 +34,21 @@ PixelLock -d -i ./encrypted.enc -o ./new-image
 
 ### Security Challenge (NOT YET STARTED!)
 
-There may be a security bug due to an incorrect implementation in this project and/or a vulnerable dependency used.
+This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret image in this [Gist](). If your image is correct, you win **500 GBP**!
 
-This is an open challenge for those interested in bug bounties. Find a way to decrypt the image in the [challenge directory](https://github.com/saltukalakus/PixelLock/blob/main/challange). If the image is correct, you win **500 GBP**!
+**Rules:**
 
-Rules:
+1. You should not target attacking my computer or any of my online accounts. Somehow, accessing the image that way is not eligible for the reward.
 
-1. You should not target attacking my computer or any of my accounts I have online. Accessing the image that way somehow is not part of this bug bounty.
+2. The accepted method for the reward is through finding a vulnerability in this project or its dependencies and leveraging it to bypass the secret. 
 
-2. The only accepted method is through finding a vulnerability in this project or its dependencies and leveraging it to bypass the secret.
+3. If you brute-forced the secret and that worked, you need to share proof of your brute-force attempt. I suggest not going that route as it would probably be impractical. But if you found a way to minimize the possible set of secrets, that should be a valid approach.
 
-3. Open an issue and upload the decrypted image. Don't disclose how you were able to bypass the secret. I will reach out to you to understand how you bypassed the secret and make the payment.
+4. Open an issue in this repository and upload the secret image and ping me @saltukalakus. Don't disclose how you were able to bypass the encryption. I will reach out to you to understand how you bypassed the secret and make the payment.
 
-4. Only **one** hacker who opens an issue first with the correct image wins.
+5. Only the **first** hacker who opens an issue with the correct image wins.
 
-5. The challange is 60 days time boxed. I will share the secret in the challange directory if no one can find a vulnerability. 
+6. The challenge is time-boxed. It will end on the 31st of July 2025. I will share the secret in the same Gist in the comments section if no one can decrypt it until then.
 
 ### Disclaimer
 

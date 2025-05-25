@@ -9,6 +9,7 @@ use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
 use std::fs::File;
 use std::io::Read;
+use base64::{engine::general_purpose, Engine};
 
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
@@ -45,7 +46,9 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_bytes.extend_from_slice(&iv_bytes);
     output_bytes.extend_from_slice(&encrypted_data);
 
-    fs::write(&output_encrypted_path, output_bytes)?;
+    // Encode the encrypted data in Base64
+    let base64_encoded = general_purpose::STANDARD.encode(output_bytes);
+    fs::write(&output_encrypted_path, base64_encoded)?;
     println!("Image encrypted successfully to: {:?}", output_encrypted_path);
     Ok(original_format)
 }
@@ -55,7 +58,15 @@ fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_decrypted_path: P,
     key: &[u8; 32],
 ) -> Result<(), ImageError> {
-    let full_encrypted_data = fs::read(&input_encrypted_path)?;
+    // Read the Base64-encoded encrypted data
+    let base64_encoded_data = fs::read_to_string(&input_encrypted_path)?;
+    let full_encrypted_data = general_purpose::STANDARD.decode(base64_encoded_data).map_err(|_| {
+        ImageError::Decoding(image::error::DecodingError::new(
+            image::error::ImageFormatHint::Unknown,
+            "Failed to decode Base64 data".to_string(),
+        ))
+    })?;
+
     let (iv_bytes, encrypted_data) = full_encrypted_data.split_at(16);
 
     let cipher = Aes256CbcDec::new(key.into(), iv_bytes.into());
