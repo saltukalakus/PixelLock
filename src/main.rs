@@ -178,29 +178,32 @@ fn validate_password_complexity(password: &str) -> bool {
     true
 }
 
-fn prompt_and_validate_secret() -> String {
-    loop {
+fn prompt_and_validate_secret(is_encryption_mode: bool) -> String {
+    if is_encryption_mode {
+        loop {
+            print!("Enter your new secret: ");
+            io::stdout().flush().unwrap();
+            let secret1 = read_password().expect("Failed to read secret");
+
+            if !validate_password_complexity(&secret1) {
+                println!("Please try again, ensuring the password meets all complexity requirements.");
+                continue;
+            }
+
+            print!("Re-enter your new secret: ");
+            io::stdout().flush().unwrap();
+            let secret2 = read_password().expect("Failed to read secret");
+
+            if secret1 != secret2 {
+                eprintln!("Error: Secrets do not match. Please try again.");
+                continue;
+            }
+            return secret1;
+        }
+    } else {
         print!("Enter your secret: ");
-        io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-        let secret1 = read_password().expect("Failed to read secret");
-
-        if !validate_password_complexity(&secret1) {
-            // Error messages are printed by validate_password_complexity
-            // Ask to re-enter without exiting immediately, or exit if preferred.
-            // For now, let's allow re-entry.
-            println!("Please try again, ensuring the password meets all complexity requirements.");
-            continue;
-        }
-
-        print!("Re-enter your secret: ");
-        io::stdout().flush().unwrap(); // Ensure the prompt is displayed immediately
-        let secret2 = read_password().expect("Failed to read secret");
-
-        if secret1 != secret2 {
-            eprintln!("Error: Secrets do not match. Please try again.");
-            continue; // Allow re-entry
-        }
-        return secret1; // Return the secret as a string
+        io::stdout().flush().unwrap();
+        read_password().expect("Failed to read secret")
     }
 }
 
@@ -261,7 +264,7 @@ fn main() {
 
     validate_file_exists(input_file);
 
-    let encryption_secret = prompt_and_validate_secret();
+    let encryption_secret = prompt_and_validate_secret(is_encrypt); // Pass mode flag
 
     if is_encrypt {
         match encrypt_image(input_file, output_file, &encryption_secret) {
