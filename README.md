@@ -29,10 +29,21 @@ Encrypting an image.
 ```bash
 ./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted.txt
 ```
+Encrypting all supported files in a folder.
+
+```bash
+./target/release/PixelLock -e -f -i ./input-folder -o ./output-folder
+```
+
 Decrypting an image.
 
 ```bash
 ./target/release/PixelLock -d -i ./encrypted.txt -o ./image2.jpeg
+```
+Decrypting all supported files in a folder.
+
+```bash
+./target/release/PixelLock -d -f -i ./input-folder -o ./output-folder
 ```
 
 ### Security Challenge (NOT YET STARTED!)

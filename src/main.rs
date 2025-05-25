@@ -2,7 +2,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit}; 
 use image::{io::Reader as ImageReader, ImageError, ImageFormat, ImageOutputFormat};
 use rand::{rngs::OsRng, Rng}; 
-use std::{fs, io::{self, Cursor, Write}, path::Path};
+use std::{fs, io::{self, Cursor, Write}, path::{Path, PathBuf}};
 use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
 use argon2::{Argon2, PasswordHasher}; 
@@ -14,7 +14,7 @@ const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
 
 fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P,
-    output_encrypted_path: P,
+    output_encrypted_path_param: P, // Renamed for clarity
     secret: &Zeroizing<String>, // Changed type
 ) -> Result<String, ImageError> {
     let img = ImageReader::open(&input_image_path)?.decode()?;
@@ -60,8 +60,11 @@ fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_bytes.extend_from_slice(&nonce_bytes); // Store the nonce
     output_bytes.extend_from_slice(&encrypted_data);
 
-    fs::write(&output_encrypted_path, output_bytes)?;
-    println!("Image encrypted successfully to: {:?}", output_encrypted_path);
+    let output_path_buf = PathBuf::from(output_encrypted_path_param.as_ref());
+    let final_output_path = output_path_buf.with_extension("txt");
+
+    fs::write(&final_output_path, output_bytes)?;
+    println!("Image encrypted successfully to: {:?}", final_output_path);
     Ok(original_format)
 }
 
@@ -220,20 +223,20 @@ fn main() {
     let matches = Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-GCM")
+        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-GCM. \nWith -f, processes all files in a folder.")
         .arg(
             Arg::new("decrypt")
                 .short('d')
                 .long("decrypt")
                 .action(ArgAction::SetTrue)
-                .help("Decrypt the input file"),
+                .help("Decrypt the input file(s)"),
         )
         .arg(
             Arg::new("encrypt")
                 .short('e')
                 .long("encrypt")
                 .action(ArgAction::SetTrue)
-                .help("Encrypt the input file"),
+                .help("Encrypt the input file(s)"),
         )
         .arg(
             Arg::new("input")
@@ -241,7 +244,7 @@ fn main() {
                 .long("input")
                 .required(true)
                 .value_parser(clap::value_parser!(String))
-                .help("Path to the input file"),
+                .help("Path to the input file or folder (if -f is used)"),
         )
         .arg(
             Arg::new("output")
@@ -249,37 +252,133 @@ fn main() {
                 .long("output")
                 .required(true)
                 .value_parser(clap::value_parser!(String))
-                .help("Path to the output file"),
+                .help("Path to the output file or folder (if -f is used)"),
+        )
+        .arg(
+            Arg::new("folder")
+                .short('f')
+                .long("folder")
+                .action(ArgAction::SetTrue)
+                .help("Process all files in the input folder (non-recursive). -i becomes input folder, -o becomes output folder."),
         )
         .get_matches();
 
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
+    let is_folder_mode = matches.get_flag("folder");
 
     if is_decrypt == is_encrypt {
         eprintln!("Error: You must specify either --encrypt (-e) or --decrypt (-d).");
-        return;
+        std::process::exit(1);
     }
 
-    let input_file = matches.get_one::<String>("input").unwrap();
-    let output_file = matches.get_one::<String>("output").unwrap();
-
-    validate_file_exists(input_file);
+    let input_arg_str = matches.get_one::<String>("input").unwrap();
+    let output_arg_str = matches.get_one::<String>("output").unwrap();
 
     let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
 
-    if is_encrypt {
-        match encrypt_image(input_file, output_file, &encryption_secret) {
-            Ok(original_format) => {
-                println!("File encrypted successfully. Original format: {}", original_format);
+    if is_folder_mode {
+        let input_dir = Path::new(input_arg_str);
+        let output_dir = Path::new(output_arg_str);
+
+        if !input_dir.is_dir() {
+            eprintln!("Error: Input path '{}' is not a directory. Use -f for folder operations.", input_arg_str);
+            std::process::exit(1);
+        }
+
+        if !output_dir.exists() {
+            if let Err(e) = fs::create_dir_all(&output_dir) {
+                eprintln!("Error: Could not create output directory '{}': {}", output_arg_str, e);
+                std::process::exit(1);
+            }
+            println!("Created output directory: {:?}", output_dir);
+        } else if !output_dir.is_dir() {
+            eprintln!("Error: Output path '{}' exists but is not a directory.", output_arg_str);
+            std::process::exit(1);
+        }
+
+        match fs::read_dir(input_dir) {
+            Ok(entries) => {
+                let mut files_processed_successfully = 0;
+                let mut files_failed_to_process = 0;
+                let mut files_skipped_extension = 0;
+                println!("\nStarting folder processing...");
+
+                for entry_result in entries {
+                    match entry_result {
+                        Ok(entry) => {
+                            let current_input_file_path = entry.path();
+                            if current_input_file_path.is_file() {
+                                let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                                let lower_extension = extension.to_lowercase();
+                                
+                                if !["jpeg", "jpg", "bmp", "png"].contains(&lower_extension.as_str()) {
+                                    files_skipped_extension += 1;
+                                    continue;
+                                }
+
+                                let file_name = match current_input_file_path.file_name() {
+                                    Some(name) => name,
+                                    None => {
+                                        eprintln!("Warning: Could not get file name for {:?}, skipping.", current_input_file_path);
+                                        files_failed_to_process += 1;
+                                        continue;
+                                    }
+                                };
+                                let current_output_file_path = output_dir.join(file_name);
+
+                                print!("Processing {:?} -> {:?} ... ", current_input_file_path, current_output_file_path);
+                                io::stdout().flush().unwrap();
+
+                                let operation_result = if is_encrypt {
+                                    encrypt_image(&current_input_file_path, &current_output_file_path, &encryption_secret).map(|_| ())
+                                } else { // is_decrypt
+                                    decrypt_image(&current_input_file_path, &current_output_file_path, &encryption_secret)
+                                };
+
+                                match operation_result {
+                                    Ok(_) => {
+                                        files_processed_successfully += 1;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("\nError processing file {:?}: {}", current_input_file_path, e);
+                                        files_failed_to_process += 1;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading a directory entry: {}", e);
+                            files_failed_to_process += 1; 
+                        }
+                    }
+                }
+                println!("\nFolder processing summary:");
+                println!("  Files successfully processed: {}", files_processed_successfully);
+                println!("  Files failed to process: {}", files_failed_to_process);
+                if files_skipped_extension > 0 {
+                    println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
+                }
             }
             Err(e) => {
-                eprintln!("Error encrypting file: {}", e);
+                eprintln!("Error: Could not read input directory '{}': {}", input_arg_str, e);
+                std::process::exit(1);
             }
         }
-    } else if is_decrypt {
-        if let Err(e) = decrypt_image(input_file, output_file, &encryption_secret) {
-            eprintln!("Error decrypting file: {}", e);
+    } else { // Single file mode
+        validate_file_exists(input_arg_str);
+        if is_encrypt {
+            match encrypt_image(input_arg_str, output_arg_str, &encryption_secret) {
+                Ok(_original_format) => {
+                }
+                Err(e) => {
+                    eprintln!("Error encrypting file: {}", e);
+                }
+            }
+        } else if is_decrypt {
+            if let Err(e) = decrypt_image(input_arg_str, output_arg_str, &encryption_secret) {
+                eprintln!("Error decrypting file: {}", e);
+            }
         }
     }
 }
