@@ -114,10 +114,18 @@ fn build_cli_app() -> ArgMatches {
                 .default_value("png")
                 .help("Output format for encryption: 'png' (steganography) or 'txt' (Base64). Only affects encryption."),
         )
+        .arg(
+            Arg::new("base")
+                .short('b')
+                .long("base")
+                .value_parser(clap::value_parser!(String))
+                .required(false)
+                .help("Path to a base PNG image to use for steganography when format is 'png'. If too small, it will be tiled to fit data.")
+        )
         .get_matches()
 }
 
-fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>, output_format_preference: &str) {
+fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>, output_format_preference: &str, base_image_path_str_opt: Option<&String>) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
 
@@ -172,7 +180,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             io::stdout().flush().unwrap();
 
                             let operation_result = if is_encrypt {
-                                utils::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference).map(|_| ())
+                                utils::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new)).map(|_| ())
                             } else {
                                 utils::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret)
                             };
@@ -214,6 +222,7 @@ fn main() {
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
     let output_format_preference = matches.get_one::<String>("format").unwrap().as_str();
+    let base_image_path_str_opt = matches.get_one::<String>("base");
 
     if is_decrypt == is_encrypt {
         eprintln!("Error: You must specify either --encrypt (-e) or --decrypt (-d).");
@@ -233,11 +242,11 @@ fn main() {
             eprintln!("Error: Input is a folder, so output '{}' must also be a folder or not exist (it will be created). It currently exists as a file.", output_arg_str);
             std::process::exit(1);
         }
-        process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret, output_format_preference);
+        process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret, output_format_preference, base_image_path_str_opt);
     } else {
         validate_file_exists(input_arg_str);
         if is_encrypt {
-            match utils::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference) {
+            match utils::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new)) {
                 Ok(_original_format) => {}
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);

@@ -11,11 +11,12 @@ use base64::{Engine as _, engine::general_purpose};
 pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
 
-pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
-    input_image_path: P,
-    output_encrypted_path_param: P,
+pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
+    input_image_path: P1,
+    output_encrypted_path_param: P2,
     secret: &Zeroizing<String>,
     output_format_preference: &str,
+    base_image_path_opt: Option<P3>,
 ) -> Result<String, ImageError> {
     let original_format_str = input_image_path
         .as_ref()
@@ -60,34 +61,115 @@ pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
         data_to_embed.extend_from_slice(&payload_len_bytes);
         data_to_embed.extend_from_slice(&raw_output_payload);
 
-        let bytes_to_embed_count = data_to_embed.len();
-        let pixels_needed = (bytes_to_embed_count + 2) / 3;
+        let total_bits_to_embed = data_to_embed.len() * 8;
+        let pixels_needed = (total_bits_to_embed + 2) / 3;
 
-        let width = (pixels_needed as f64).sqrt().ceil() as u32;
-        let height = (pixels_needed + width as usize - 1) / width as usize;
-        let width = width as u32;
-        let height = height as u32;
+        let mut carrier_image: RgbImage;
 
-        if width == 0 || height == 0 {
-            return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                image::error::ParameterErrorKind::Generic(
-                    "Calculated image dimensions for steganography are zero. Payload might be empty.".to_string()
-                )
-            )));
-        }
-        
-        let mut carrier_image = RgbImage::new(width, height);
-        let mut data_iter = data_to_embed.iter();
+        if let Some(base_path_ref) = base_image_path_opt {
+            let base_path = base_path_ref.as_ref();
+            if !base_path.exists() {
+                return Err(ImageError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Base image not found: {:?}", base_path),
+                )));
+            }
+            if base_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase() != "png" {
+                return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
+                    image::error::ParameterErrorKind::Generic("Base image must be a PNG file.".to_string())
+                )));
+            }
 
-        for y in 0..height {
-            for x in 0..width {
-                let r = *data_iter.next().unwrap_or(&random::<u8>());
-                let g = *data_iter.next().unwrap_or(&random::<u8>());
-                let b = *data_iter.next().unwrap_or(&random::<u8>());
-                carrier_image.put_pixel(x, y, image::Rgb([r, g, b]));
+            let base_dyn_image = image::open(base_path)?;
+            let base_rgb_image = base_dyn_image.to_rgb8();
+            let base_width = base_rgb_image.width();
+            let base_height = base_rgb_image.height();
+            let base_pixels_capacity = (base_width * base_height) as usize;
+
+            if base_pixels_capacity >= pixels_needed {
+                carrier_image = base_rgb_image;
+            } else {
+                let mut new_width = base_width;
+                let mut new_height = base_height;
+                while ((new_width * new_height) as usize) < pixels_needed {
+                    new_width *= 2;
+                    new_height *= 2; 
+                }
+                if new_width == 0 { new_width = (pixels_needed as f64).sqrt().ceil() as u32; }
+                if new_height == 0 { new_height = (pixels_needed as u32 + new_width - 1) / new_width; }
+                if new_width == 0 { new_width = 1; }
+                if new_height == 0 { new_height = 1; }
+
+                let mut tiled_image = RgbImage::new(new_width, new_height);
+                if base_width > 0 && base_height > 0 {
+                    for y_tiled in 0..new_height {
+                        for x_tiled in 0..new_width {
+                            let orig_x = x_tiled % base_width;
+                            let orig_y = y_tiled % base_height;
+                            tiled_image.put_pixel(x_tiled, y_tiled, *base_rgb_image.get_pixel(orig_x, orig_y));
+                        }
+                    }
+                } else {
+                    for pixel in tiled_image.pixels_mut() {
+                        *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
+                    }
+                }
+                carrier_image = tiled_image;
+            }
+        } else {
+            let width = (pixels_needed as f64).sqrt().ceil() as u32;
+            let mut height = (pixels_needed as u32 + width - 1) / width;
+            if width == 0 { return Err(ImageError::Parameter(image::error::ParameterError::from_kind(image::error::ParameterErrorKind::Generic("Calculated width is zero for new image".into())))); }
+            if height == 0 { height = 1; }
+
+            carrier_image = RgbImage::new(width, height);
+            for pixel_val in carrier_image.pixels_mut() {
+                *pixel_val = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
             }
         }
         
+        let mut bit_idx_overall = 0; 
+        let (img_width, img_height) = carrier_image.dimensions();
+
+        'embedding_loop: for y in 0..img_height {
+            for x in 0..img_width {
+                if bit_idx_overall >= total_bits_to_embed {
+                    break 'embedding_loop;
+                }
+                let pixel = carrier_image.get_pixel_mut(x, y);
+                
+                if bit_idx_overall < total_bits_to_embed {
+                    let data_byte_idx = bit_idx_overall / 8;
+                    let bit_in_byte_idx = bit_idx_overall % 8;
+                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
+                    pixel.0[0] = (pixel.0[0] & 0xFE) | current_bit;
+                    bit_idx_overall += 1;
+                } else { break 'embedding_loop; }
+
+                if bit_idx_overall < total_bits_to_embed {
+                    let data_byte_idx = bit_idx_overall / 8;
+                    let bit_in_byte_idx = bit_idx_overall % 8;
+                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
+                    pixel.0[1] = (pixel.0[1] & 0xFE) | current_bit;
+                    bit_idx_overall += 1;
+                } else { break 'embedding_loop; }
+
+                if bit_idx_overall < total_bits_to_embed {
+                    let data_byte_idx = bit_idx_overall / 8;
+                    let bit_in_byte_idx = bit_idx_overall % 8;
+                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
+                    pixel.0[2] = (pixel.0[2] & 0xFE) | current_bit;
+                    bit_idx_overall += 1;
+                } else { break 'embedding_loop; }
+            }
+        }
+        
+        if bit_idx_overall < total_bits_to_embed {
+            return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
+                image::error::ParameterErrorKind::Generic("Carrier image too small to embed all data bits.".to_string())
+            )));
+        }
+
         let final_output_path = output_path_base.with_extension("png");
         carrier_image.save(&final_output_path)?;
         println!("Image encrypted successfully to (Steganography PNG): {:?}", final_output_path);
@@ -100,9 +182,9 @@ pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     Ok(original_format_str)
 }
 
-pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
-    input_encrypted_path_ref: P,
-    output_decrypted_path_base: P,
+pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std::fmt::Debug>(
+    input_encrypted_path_ref: PIn,
+    output_decrypted_path_base: POut,
     secret: &Zeroizing<String>,
 ) -> Result<(), ImageError> {
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
@@ -121,41 +203,73 @@ pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     } else if input_extension == "png" {
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
-        let mut extracted_bytes_with_len = Vec::new();
         
-        let max_possible_bytes = (width * height * 3) as usize;
+        let mut extracted_all_bytes = Vec::new();
+        let mut current_reconstructed_byte: u8 = 0;
+        let mut bits_in_current_byte: u8 = 0;
+        
+        let mut payload_len_opt: Option<usize> = None;
+        let mut bytes_extracted_count = 0;
 
-        for y in 0..height {
+        let theoretical_max_bytes = (width as usize * height as usize * 3) / 8;
+
+        'extraction_loop: for y in 0..height {
             for x in 0..width {
-                let pixel = carrier_image.get_pixel(x, y);
-                extracted_bytes_with_len.push(pixel[0]);
-                if extracted_bytes_with_len.len() >= max_possible_bytes { break; }
-                extracted_bytes_with_len.push(pixel[1]);
-                if extracted_bytes_with_len.len() >= max_possible_bytes { break; }
-                extracted_bytes_with_len.push(pixel[2]);
-                if extracted_bytes_with_len.len() >= max_possible_bytes { break; }
+                let pixel_channels = carrier_image.get_pixel(x,y).0;
+
+                for channel_idx in 0..3 {
+                    let lsb = pixel_channels[channel_idx] & 1;
+                    current_reconstructed_byte |= lsb << bits_in_current_byte;
+                    bits_in_current_byte += 1;
+
+                    if bits_in_current_byte == 8 {
+                        extracted_all_bytes.push(current_reconstructed_byte);
+                        bytes_extracted_count += 1;
+                        current_reconstructed_byte = 0;
+                        bits_in_current_byte = 0;
+
+                        if bytes_extracted_count == 4 && payload_len_opt.is_none() {
+                            let len_arr: [u8; 4] = extracted_all_bytes[0..4].try_into().map_err(|_| 
+                                ImageError::Decoding(image::error::DecodingError::new(
+                                    image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                                    "Failed to convert extracted length bytes to array".to_string(),
+                            )))?;
+                            payload_len_opt = Some(u32::from_be_bytes(len_arr) as usize);
+                        }
+
+                        if let Some(len) = payload_len_opt {
+                            if bytes_extracted_count >= 4 + len {
+                                break 'extraction_loop;
+                            }
+                        }
+                        
+                        if bytes_extracted_count > theoretical_max_bytes + 4 {
+                             return Err(ImageError::Decoding(image::error::DecodingError::new(
+                                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                                "Potential data corruption: trying to extract more bytes than image capacity.".to_string(),
+                            )));
+                        }
+                    }
+                }
             }
-            if extracted_bytes_with_len.len() >= max_possible_bytes { break; }
         }
-
-        if extracted_bytes_with_len.len() < 4 {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
+        
+        if payload_len_opt.is_none() || extracted_all_bytes.len() < 4 {
+             return Err(ImageError::Decoding(image::error::DecodingError::new(
                 image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                "Steganography PNG too small to contain payload length".to_string(),
+                "Steganography PNG too small to extract payload length".to_string(),
             )));
         }
+        let payload_len = payload_len_opt.unwrap();
 
-        let payload_len_bytes: [u8; 4] = extracted_bytes_with_len[0..4].try_into().unwrap();
-        let payload_len = u32::from_be_bytes(payload_len_bytes) as usize;
-
-        if 4 + payload_len > extracted_bytes_with_len.len() {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
+        if extracted_all_bytes.len() < 4 + payload_len {
+             return Err(ImageError::Decoding(image::error::DecodingError::new(
                 image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                format!("Steganography PNG data incomplete. Expected {} bytes payload, found less after extracting length.", payload_len),
+                format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", payload_len, extracted_all_bytes.len() - 4),
             )));
         }
-        encrypted_file_data_payload = extracted_bytes_with_len[4..4 + payload_len].to_vec();
-        println!("Decrypting from Steganography PNG file: {:?}", input_encrypted_path);
+        encrypted_file_data_payload = extracted_all_bytes[4..4 + payload_len].to_vec();
+        println!("Decrypting from Steganography PNG file (LSB): {:?}", input_encrypted_path);
     } else {
         return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
             image::error::ImageFormatHint::Unknown,
