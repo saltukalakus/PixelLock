@@ -2,9 +2,9 @@
 
 PixelLock is a command-line tool to secure your pictures with a password. It helps enhance privacy and provide an additional layer of security.
 
-AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
+AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. 
 
-Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption, and the file extension is automatically corrected. This is handy as you may not know the file type of an encrypted file.
+Image formats currently supported for input are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the decrypted file (regardless of whether it was stored as `.txt` or embedded in a `.png`), and the file extension is automatically corrected upon decryption. This is handy as you may not know the file type of an encrypted file.
 
 ### Build Requirements
 - Rust (1.87.0 or later)
@@ -24,28 +24,43 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 ### Usage
 
-When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created.
+You can choose the output format using the `-f` (or `--format`) option:
+-   `-f txt` (default): The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
+-   `-f png`: The tool embeds the encrypted binary data (salt + nonce + ciphertext) into the pixels of a newly generated PNG image. This is a form of steganography. The output file will have a `.png` extension.
 
-During decryption, if the input path (`-i`) is a folder, PixelLock will process files with the `.txt` extension only.
 
-Encrypting a single image:
+When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created. The `-f` option applies to all files processed in folder mode.
+
+During decryption, if the input path (`-i`) is a folder, PixelLock will process files with `.txt` or `.png` extensions only, automatically detecting whether they are Base64 encoded or steganographic PNGs.
+
+Encrypting a single image (default to Base64 `.txt` output):
 ```bash
-./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted.txt
+./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted_base_name
+# Output will be ./encrypted_base_name.txt
 ```
 
-Encrypting all supported files in a folder:
+Encrypting a single image into a steganographic PNG:
 ```bash
-./target/release/PixelLock -e -i ./input-folder -o ./output-folder
+./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name -f png
+# Output will be ./stego_image_base_name.png
 ```
 
-Decrypting a single image:
+Encrypting all supported files in a folder into steganographic PNGs:
 ```bash
-./target/release/PixelLock -d -i ./encrypted.txt -o ./image2.jpeg
+./target/release/PixelLock -e -i ./input-folder -o ./output-folder -f png
+```
+
+Decrypting a single image (auto-detects if it's a `.txt` or `.png` encrypted file):
+```bash
+./target/release/PixelLock -d -i ./encrypted_file.txt -o ./decrypted_image_base_name
+# Or
+./target/release/PixelLock -d -i ./stego_image.png -o ./decrypted_image_base_name
+# Output extension will be based on detected original format, e.g., ./decrypted_image_base_name.jpeg
 ```
 
 Decrypting all supported files in a folder:
 ```bash
-./target/release/PixelLock -d -i ./input-folder -o ./output-folder
+./target/release/PixelLock -d -i ./input-folder-with-txt-and-png -o ./output-folder-for-decrypted
 ```
 
 ### Security Challenge (NOT YET STARTED!)
