@@ -6,8 +6,6 @@ AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash
 
 Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption, and the file extension is automatically corrected. This is handy as you may not know the file type of an encrypted file.
 
-If the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created.
-
 ### Build Requirements
 - Rust (1.87.0 or later)
 - Cargo (1.87.0 or later)
@@ -26,12 +24,16 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 ### Usage
 
+When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created.
+
+During decryption, if the input path (`-i`) is a folder, PixelLock will process files with the `.txt` extension only.
+
 Encrypting a single image:
 ```bash
 ./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted.txt
 ```
 
-Encrypting all supported files in a folder.
+Encrypting all supported files in a folder:
 ```bash
 ./target/release/PixelLock -e -i ./input-folder -o ./output-folder
 ```
@@ -41,7 +43,7 @@ Decrypting a single image:
 ./target/release/PixelLock -d -i ./encrypted.txt -o ./image2.jpeg
 ```
 
-Decrypting all supported files in a folder.
+Decrypting all supported files in a folder:
 ```bash
 ./target/release/PixelLock -d -i ./input-folder -o ./output-folder
 ```

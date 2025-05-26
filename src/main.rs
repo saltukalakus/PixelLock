@@ -139,8 +139,14 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
                             let lower_extension = extension.to_lowercase();
                             
-                            let supported_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
-                            if !supported_extensions.contains(&lower_extension.as_str()) {
+                            let should_process = if is_encrypt {
+                                let supported_encryption_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
+                                supported_encryption_extensions.contains(&lower_extension.as_str())
+                            } else { // Decrypting
+                                lower_extension == "txt" // Encrypted files are expected to be .txt
+                            };
+
+                            if !should_process {
                                 files_skipped_extension += 1;
                                 continue;
                             }
