@@ -75,7 +75,7 @@ fn build_cli_app() -> ArgMatches {
     Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images in JPEG, PNG, or BMP using AES-256-GCM. \nWith -f, processes all files in a folder.")
+        .about("Encrypts and decrypts images. \nIf -i is a folder, processes all supported files in that folder and -o must be an output folder.")
         .arg(
             Arg::new("decrypt")
                 .short('d')
@@ -96,7 +96,7 @@ fn build_cli_app() -> ArgMatches {
                 .long("input")
                 .required(true)
                 .value_parser(clap::value_parser!(String))
-                .help("Path to the input file or folder (if -f is used)"),
+                .help("Path to the input file or folder"),
         )
         .arg(
             Arg::new("output")
@@ -104,14 +104,7 @@ fn build_cli_app() -> ArgMatches {
                 .long("output")
                 .required(true)
                 .value_parser(clap::value_parser!(String))
-                .help("Path to the output file or folder (if -f is used)"),
-        )
-        .arg(
-            Arg::new("folder")
-                .short('f')
-                .long("folder")
-                .action(ArgAction::SetTrue)
-                .help("Process all files in the input folder (non-recursive). -i becomes input folder, -o becomes output folder."),
+                .help("Path to the output file or folder"),
         )
         .get_matches()
 }
@@ -119,11 +112,6 @@ fn build_cli_app() -> ArgMatches {
 fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
-
-    if !input_dir.is_dir() {
-        eprintln!("Error: Input path '{}' is not a directory. Use -f for folder operations.", input_dir_str);
-        std::process::exit(1);
-    }
 
     if !output_dir.exists() {
         if let Err(e) = fs::create_dir_all(&output_dir) {
@@ -212,7 +200,6 @@ fn main() {
 
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
-    let is_folder_mode = matches.get_flag("folder");
 
     if is_decrypt == is_encrypt {
         eprintln!("Error: You must specify either --encrypt (-e) or --decrypt (-d).");
@@ -221,10 +208,17 @@ fn main() {
 
     let input_arg_str = matches.get_one::<String>("input").unwrap();
     let output_arg_str = matches.get_one::<String>("output").unwrap();
+    
+    let input_path = Path::new(input_arg_str);
 
     let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
 
-    if is_folder_mode {
+    if input_path.is_dir() {
+        let output_path = Path::new(output_arg_str);
+        if output_path.exists() && !output_path.is_dir() {
+            eprintln!("Error: Input is a folder, so output '{}' must also be a folder or not exist (it will be created). It currently exists as a file.", output_arg_str);
+            std::process::exit(1);
+        }
         process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret);
     } else {
         validate_file_exists(input_arg_str);

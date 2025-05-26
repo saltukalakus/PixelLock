@@ -1,10 +1,12 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
-PixelLock is a command-line tool to secure your pictures with a password. It helps to enhance privacy and provide an additional layer of security.
+PixelLock is a command-line tool to secure your pictures with a password. It helps enhance privacy and provide an additional layer of security.
 
 AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
 
-Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption, and the file extension type is automatically corrected. This is handy as you may not know the file type of an encrypted file.
+Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption, and the file extension is automatically corrected. This is handy as you may not know the file type of an encrypted file.
+
+If the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created.
 
 ### Build Requirements
 - Rust (1.87.0 or later)
@@ -20,30 +22,28 @@ Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The i
    cargo build --release
    ```
 
-These steps generate the executable **PixelLock** in the `/target/release` folder.
+These steps generate the executable **PixelLock** in the `/target/release` directory.
 
 ### Usage
 
-Encrypting an image.
-
+Encrypting a single image:
 ```bash
 ./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted.txt
 ```
-Encrypting all supported files in a folder.
 
+Encrypting all supported files in a folder.
 ```bash
-./target/release/PixelLock -e -f -i ./input-folder -o ./output-folder
+./target/release/PixelLock -e -i ./input-folder -o ./output-folder
 ```
 
-Decrypting an image.
-
+Decrypting a single image:
 ```bash
 ./target/release/PixelLock -d -i ./encrypted.txt -o ./image2.jpeg
 ```
-Decrypting all supported files in a folder.
 
+Decrypting all supported files in a folder.
 ```bash
-./target/release/PixelLock -d -f -i ./input-folder -o ./output-folder
+./target/release/PixelLock -d -i ./input-folder -o ./output-folder
 ```
 
 ### Security Challenge (NOT YET STARTED!)
@@ -52,17 +52,17 @@ This is an open challenge for those interested in bug bounties. Find a way to de
 
 **Rules:**
 
-1. You should not target attacking my computer or any of my online accounts. Somehow, accessing the image that way is not eligible for the reward.
+1. You should not target or attack my computer or any of my online accounts. Accessing the image that way is not eligible for the reward.
 
 2. The accepted method for the reward is through finding a vulnerability in this project or its dependencies and leveraging it to bypass the secret. 
 
-3. If you brute-forced the secret and that worked, you need to share proof of your brute-force attempt. I suggest not going that route as it would probably be impractical. But if you found a way to minimize the possible set of secrets to brute-force, that should be a valid approach.
+3. If you brute-force the secret and that works, you need to share proof of your brute-force attempt. I suggest not going that route, as it would probably be impractical. However, if you find a way to minimize the possible set of secrets to brute-force, that should be a valid approach.
 
-4. Open an issue in this repository and upload the original image and ping me @saltukalakus. Don't disclose how you were able to bypass the encryption. I will reach out to you to understand how you bypassed it.
+4. Open an issue in this repository, upload the original image, and ping me @saltukalakus. Do not disclose how you were able to bypass the encryption. I will reach out to you to understand how you bypassed it.
 
 5. Only the **first** hacker who opens an issue with the correct image wins.
 
-6. The challenge is time-boxed. It will end on the 31st of July 2025, 1 PM UTC. I will share the secret in the same Gist in the comments section if no one can decrypt it until then.
+6. The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one can decrypt it by then.
 
 ### Disclaimer 
 
