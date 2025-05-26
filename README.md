@@ -2,9 +2,9 @@
 
 PixelLock is a command-line tool to secure your pictures with a password. It helps to enhance privacy and provide an additional layer of security.
 
-AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. The tool stores the encrypted file in a Base64-encoded text format, typically with a `.txt` extension.
+AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
 
-Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption. This is handy as you may not know the file type of an encrypted file.
+Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the encrypted file after decryption, and the file extension type is automatically corrected. This is handy as you may not know the file type of an encrypted file.
 
 ### Build Requirements
 - Rust (1.87.0 or later)
