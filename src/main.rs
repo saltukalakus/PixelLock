@@ -151,7 +151,8 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
                             let lower_extension = extension.to_lowercase();
                             
-                            if !["jpeg", "jpg", "bmp", "png"].contains(&lower_extension.as_str()) {
+                            let supported_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
+                            if !supported_extensions.contains(&lower_extension.as_str()) {
                                 files_skipped_extension += 1;
                                 continue;
                             }

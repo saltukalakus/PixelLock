@@ -1,8 +1,8 @@
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
-use image::{io::Reader as ImageReader, ImageError, ImageFormat, ImageOutputFormat};
+use image::{ImageError};
 use rand::{rngs::OsRng, Rng};
-use std::{fs, io::{Cursor}, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}};
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{SaltString};
 use zeroize::Zeroizing;
@@ -16,28 +16,15 @@ pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_encrypted_path_param: P,
     secret: &Zeroizing<String>,
 ) -> Result<String, ImageError> {
-    let img = ImageReader::open(&input_image_path)?.decode()?;
-    let original_format = input_image_path
+    let original_format_str = input_image_path
         .as_ref()
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("png")
-        .to_string();
+        .to_lowercase();
 
-    let mut img_byte_array = Cursor::new(Vec::new());
-    if original_format == "png" {
-        img.write_to(&mut img_byte_array, ImageOutputFormat::Png)?;
-    } else if original_format == "bmp" {
-        img.write_to(&mut img_byte_array, ImageFormat::Bmp)?;
-    } else if original_format == "jpeg" || original_format == "jpg" {
-        img.write_to(&mut img_byte_array, ImageOutputFormat::Jpeg(100))?;
-    } else {
-        return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
-            image::error::ImageFormatHint::Unknown,
-            image::error::UnsupportedErrorKind::GenericFeature("Unsupported image format".to_string()),
-        )));
-    }
-    let img_bytes = img_byte_array.into_inner();
+    let img_bytes = fs::read(&input_image_path)
+        .map_err(ImageError::IoError)?;
 
     let salt: SaltString = SaltString::generate(&mut OsRng);
     let derived_key = derive_encryption_key_with_salt(&*secret, &salt);
@@ -66,7 +53,7 @@ pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 
     fs::write(&final_output_path, base64_encoded_data)?;
     println!("Image encrypted successfully to: {:?}", final_output_path);
-    Ok(original_format)
+    Ok(original_format_str)
 }
 
 pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
@@ -110,27 +97,13 @@ pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 
     if let Some(format) = detect_file_format(&decrypted_data) {
         let output_path = output_decrypted_path.as_ref().with_extension(format);
-        println!("Detected file format: {:?}", format);
-
-        let img_format = match format {
-            "jpeg" => ImageFormat::Jpeg,
-            "png" => ImageFormat::Png,
-            "bmp" => ImageFormat::Bmp,
-            _ => return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
-                image::error::ImageFormatHint::Unknown,
-                image::error::UnsupportedErrorKind::GenericFeature("Unsupported image format".to_string()),
-            ))),
-        };
-
-        let img = ImageReader::with_format(Cursor::new(decrypted_data), img_format)
-            .decode()?;
-        img.save(&output_path)?;
-        println!("Image decrypted successfully to: {:?}", output_path);
+        println!("Detected file format: {:?}. Saving decrypted file to: {:?}", format, output_path);
+        fs::write(&output_path, decrypted_data)
+            .map_err(ImageError::IoError)?;
     } else {
-        eprintln!("Warning: Could not detect file format. Saving as is.");
-        let output_path = output_decrypted_path.as_ref();
-        fs::write(&output_path, decrypted_data)?;
-        println!("Image decrypted successfully to: {:?}", output_path);
+        eprintln!("Warning: Could not detect file format. Saving decrypted data as is to: {:?}", output_decrypted_path.as_ref());
+        fs::write(output_decrypted_path.as_ref(), decrypted_data)
+            .map_err(ImageError::IoError)?;
     }
 
     Ok(())
@@ -139,10 +112,18 @@ pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
 pub fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
     if decrypted_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
         Some("jpeg")
-    } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G']) {
+    } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         Some("png")
     } else if decrypted_data.starts_with(&[b'B', b'M']) {
         Some("bmp")
+    } else if decrypted_data.starts_with(b"GIF87a") || decrypted_data.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if decrypted_data.starts_with(&[0x49, 0x49, 0x2A, 0x00]) || decrypted_data.starts_with(&[0x4D, 0x4D, 0x00, 0x2A]) {
+        Some("tiff")
+    } else if decrypted_data.len() >= 12 && 
+              decrypted_data.starts_with(b"RIFF") && 
+              &decrypted_data[8..12] == b"WEBP" {
+        Some("webp")
     } else {
         None
     }
