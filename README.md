@@ -25,29 +25,28 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 ### Usage
 
 You can choose the output format using the `-f` (or `--format`) option:
--   `-f txt` (default): The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
--   `-f png`: The tool embeds the encrypted binary data (salt + nonce + ciphertext) into the pixels of a newly generated PNG image. This is a form of steganography. The output file will have a `.png` extension.
-
+-   `-f png` (default): The tool embeds the encrypted binary data (salt + nonce + ciphertext) into the pixels of a newly generated PNG image. This is a form of steganography. The output file will have a `.png` extension.
+-   `-f txt`: The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
 
 When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created. The `-f` option applies to all files processed in folder mode.
 
 During decryption, if the input path (`-i`) is a folder, PixelLock will process files with `.txt` or `.png` extensions only, automatically detecting whether they are Base64 encoded or steganographic PNGs.
 
-Encrypting a single image (default to Base64 `.txt` output):
+Encrypting a single image (default to steganographic `.png` output):
 ```bash
-./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted_base_name
-# Output will be ./encrypted_base_name.txt
-```
-
-Encrypting a single image into a steganographic PNG:
-```bash
-./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name -f png
+./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name
 # Output will be ./stego_image_base_name.png
 ```
 
-Encrypting all supported files in a folder into steganographic PNGs:
+Encrypting a single image into a Base64 text file:
 ```bash
-./target/release/PixelLock -e -i ./input-folder -o ./output-folder -f png
+./target/release/PixelLock -e -i ./image.jpeg -o ./encrypted_base_name -f txt
+# Output will be ./encrypted_base_name.txt
+```
+
+Encrypting all supported files in a folder (default to steganographic PNGs):
+```bash
+./target/release/PixelLock -e -i ./input-folder -o ./output-folder
 ```
 
 Decrypting a single image (auto-detects if it's a `.txt` or `.png` encrypted file):

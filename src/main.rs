@@ -111,8 +111,8 @@ fn build_cli_app() -> ArgMatches {
                 .short('f')
                 .long("format")
                 .value_parser(["txt", "png"])
-                .default_value("txt")
-                .help("Output format for encryption: 'txt' (Base64) or 'png' (steganography). Only affects encryption."),
+                .default_value("png")
+                .help("Output format for encryption: 'png' (steganography) or 'txt' (Base64). Only affects encryption."),
         )
         .get_matches()
 }
