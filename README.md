@@ -1,8 +1,8 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
-PixelLock encrypts your pictures with modern encryption algorithms. It helps to enhance privacy and provide an additional layer of security.
+PixelLock is a command-line tool to secure your pictures with a password. It helps to enhance privacy and provide an additional layer of security.
 
-It is a command-line tool for encrypting and decrypting image files using AES-256-GCM. Argon2 is used to hash the secret. The tool stores the encrypted file in binary format, typically with a `.txt` extension.
+AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash the secret. The tool stores the encrypted file in a Base64-encoded text format, typically with a `.txt` extension.
 
 Image formats currently supported are JPEG, PNG, and BMP. The image type is extracted from the encrypted file after decryption. This is handy as you may not know the file type of an encrypted file.
 

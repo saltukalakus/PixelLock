@@ -6,6 +6,7 @@ use std::{fs, io::{Cursor}, path::{Path, PathBuf}};
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{SaltString};
 use zeroize::Zeroizing;
+use base64::{Engine as _, engine::general_purpose};
 
 pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
@@ -58,10 +59,12 @@ pub fn encrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_bytes.extend_from_slice(&nonce_bytes);
     output_bytes.extend_from_slice(&encrypted_data);
 
+    let base64_encoded_data = general_purpose::STANDARD.encode(&output_bytes);
+
     let output_path_buf = PathBuf::from(output_encrypted_path_param.as_ref());
     let final_output_path = output_path_buf.with_extension("txt");
 
-    fs::write(&final_output_path, output_bytes)?;
+    fs::write(&final_output_path, base64_encoded_data)?;
     println!("Image encrypted successfully to: {:?}", final_output_path);
     Ok(original_format)
 }
@@ -71,7 +74,14 @@ pub fn decrypt_image<P: AsRef<Path> + std::fmt::Debug>(
     output_decrypted_path: P,
     secret: &Zeroizing<String>,
 ) -> Result<(), ImageError> {
-    let encrypted_file_data = fs::read(&input_encrypted_path)?;
+    let encrypted_file_content = fs::read_to_string(&input_encrypted_path)?;
+
+    let encrypted_file_data = general_purpose::STANDARD.decode(encrypted_file_content.trim())
+        .map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
+            image::error::ImageFormatHint::Unknown,
+            format!("Base64 decoding failed: {}", e),
+        )))?;
+
     if encrypted_file_data.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
         return Err(ImageError::Decoding(image::error::DecodingError::new(
             image::error::ImageFormatHint::Unknown,

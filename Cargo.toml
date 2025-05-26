@@ -11,3 +11,4 @@ rand = "0.8"     # Required for generating random nonces
 clap = "4.0"     # Required for command-line argument parsing
 rpassword = "5.0" # Required for securely reading passwords
 zeroize = { version = "1.7", features = ["alloc"] } # For secure secret handling
+base64 = "0.21" # For Base64 encoding/decoding
