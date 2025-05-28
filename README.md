@@ -26,13 +26,13 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 ### Usage
 
-Encrypting a single image into a base PNG image:
+Encrypting a single image, embedding it into a provided base PNG:
 ```bash
 ./target/release/PixelLock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
 # Output will be ./stego_image.png (using my_base.png as a carrier, 1 LSB)
 ```
 
-Decrypting a base PNG image and outputting the secret image:
+Decrypting a steganographic PNG image to reveal the secret image:
 ```bash
 ./target/release/PixelLock -d -i ./stego_image.png -o ./secret_image
 # Output extension will be based on detected original format, e.g., ./secret_image.jpeg
@@ -47,7 +47,7 @@ For a full list of available options, try the help command:
 
 This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can generate one of the original images, you win **500 GBP**! 
 
-All of the steganographic images are hiding different secret images. The steganographic image and password used are the same in all samples. The samples are encrypted with the default usage shown in the Usage section of this README file.
+All of the images are hiding different secret images. The base image and password used are the same in all samples. The samples are encrypted with the default usage shown in the Usage section of this README file.
 
 **Rules:**
 
@@ -61,7 +61,7 @@ All of the steganographic images are hiding different secret images. The stegano
 
 5. Only the **first** hacker who opens an issue with the correct image wins.
 
-6. The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one can find it by then.
+6. The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one has found it by then.
 
 ### Disclaimer 
 
