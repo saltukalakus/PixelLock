@@ -6,6 +6,8 @@ AES-256-GCM is used for encrypting and decrypting images. Argon2 is used to hash
 
 Image formats currently supported for input are JPEG, PNG, BMP, GIF, TIFF, and WebP. The image type is extracted from the decrypted file (regardless of whether it was stored as `.txt` or embedded in a `.png`), and the file extension is automatically corrected upon decryption. This is handy as you may not know the file type of an encrypted file.
 
+![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
+
 ### Build Requirements
 - Rust (1.87.0 or later)
 - Cargo (1.87.0 or later)
