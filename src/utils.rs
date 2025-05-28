@@ -17,6 +17,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     secret: &Zeroizing<String>,
     output_format_preference: &str,
     base_image_path_opt: Option<P3>,
+    lsb_bits_per_channel: u8, // New parameter
 ) -> Result<String, ImageError> {
     let original_format_str = input_image_path
         .as_ref()
@@ -62,7 +63,13 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         data_to_embed.extend_from_slice(&raw_output_payload);
 
         let total_bits_to_embed = data_to_embed.len() * 8;
-        let pixels_needed = (total_bits_to_embed + 2) / 3;
+        let bits_per_pixel = 3 * lsb_bits_per_channel as usize;
+        if bits_per_pixel == 0 {
+            return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
+                image::error::ParameterErrorKind::Generic("LSB bits per channel cannot be zero.".to_string())
+            )));
+        }
+        let pixels_needed = (total_bits_to_embed + bits_per_pixel - 1) / bits_per_pixel;
 
         let mut carrier_image: RgbImage;
 
@@ -130,6 +137,9 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         
         let mut bit_idx_overall = 0; 
         let (img_width, img_height) = carrier_image.dimensions();
+        
+        let clear_mask: u8 = 0xFF << lsb_bits_per_channel;
+        let data_extract_mask: u8 = (1 << lsb_bits_per_channel) - 1;
 
         'embedding_loop: for y in 0..img_height {
             for x in 0..img_width {
@@ -138,29 +148,25 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
                 }
                 let pixel = carrier_image.get_pixel_mut(x, y);
                 
-                if bit_idx_overall < total_bits_to_embed {
-                    let data_byte_idx = bit_idx_overall / 8;
-                    let bit_in_byte_idx = bit_idx_overall % 8;
-                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
-                    pixel.0[0] = (pixel.0[0] & 0xFE) | current_bit;
-                    bit_idx_overall += 1;
-                } else { break 'embedding_loop; }
-
-                if bit_idx_overall < total_bits_to_embed {
-                    let data_byte_idx = bit_idx_overall / 8;
-                    let bit_in_byte_idx = bit_idx_overall % 8;
-                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
-                    pixel.0[1] = (pixel.0[1] & 0xFE) | current_bit;
-                    bit_idx_overall += 1;
-                } else { break 'embedding_loop; }
-
-                if bit_idx_overall < total_bits_to_embed {
-                    let data_byte_idx = bit_idx_overall / 8;
-                    let bit_in_byte_idx = bit_idx_overall % 8;
-                    let current_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
-                    pixel.0[2] = (pixel.0[2] & 0xFE) | current_bit;
-                    bit_idx_overall += 1;
-                } else { break 'embedding_loop; }
+                for channel_idx in 0..3 {
+                    if bit_idx_overall >= total_bits_to_embed {
+                        break 'embedding_loop;
+                    }
+                    
+                    let mut bits_for_channel: u8 = 0;
+                    for bit_k in 0..lsb_bits_per_channel {
+                        if bit_idx_overall < total_bits_to_embed {
+                            let data_byte_idx = bit_idx_overall / 8;
+                            let bit_in_byte_idx = bit_idx_overall % 8;
+                            let current_data_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
+                            bits_for_channel |= current_data_bit << bit_k;
+                            bit_idx_overall += 1;
+                        } else {
+                            break; 
+                        }
+                    }
+                    pixel.0[channel_idx] = (pixel.0[channel_idx] & clear_mask) | (bits_for_channel & data_extract_mask);
+                }
             }
         }
         
@@ -204,6 +210,9 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
         
+        let lsb_bits_per_channel_decrypt: u8 = 1; 
+        let data_extract_mask_decrypt: u8 = (1 << lsb_bits_per_channel_decrypt) - 1;
+
         let mut extracted_all_bytes = Vec::new();
         let mut current_reconstructed_byte: u8 = 0;
         let mut bits_in_current_byte: u8 = 0;
@@ -218,36 +227,40 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
                 let pixel_channels = carrier_image.get_pixel(x,y).0;
 
                 for channel_idx in 0..3 {
-                    let lsb = pixel_channels[channel_idx] & 1;
-                    current_reconstructed_byte |= lsb << bits_in_current_byte;
-                    bits_in_current_byte += 1;
+                    let extracted_bits_from_channel = pixel_channels[channel_idx] & data_extract_mask_decrypt; 
+                    
+                    for bit_k in 0..lsb_bits_per_channel_decrypt {
+                        let current_extracted_bit = (extracted_bits_from_channel >> bit_k) & 1;
+                        current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
+                        bits_in_current_byte += 1;
 
-                    if bits_in_current_byte == 8 {
-                        extracted_all_bytes.push(current_reconstructed_byte);
-                        bytes_extracted_count += 1;
-                        current_reconstructed_byte = 0;
-                        bits_in_current_byte = 0;
+                        if bits_in_current_byte == 8 {
+                            extracted_all_bytes.push(current_reconstructed_byte);
+                            bytes_extracted_count += 1;
+                            current_reconstructed_byte = 0;
+                            bits_in_current_byte = 0;
 
-                        if bytes_extracted_count == 4 && payload_len_opt.is_none() {
-                            let len_arr: [u8; 4] = extracted_all_bytes[0..4].try_into().map_err(|_| 
-                                ImageError::Decoding(image::error::DecodingError::new(
-                                    image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                                    "Failed to convert extracted length bytes to array".to_string(),
-                            )))?;
-                            payload_len_opt = Some(u32::from_be_bytes(len_arr) as usize);
-                        }
-
-                        if let Some(len) = payload_len_opt {
-                            if bytes_extracted_count >= 4 + len {
-                                break 'extraction_loop;
+                            if bytes_extracted_count == 4 && payload_len_opt.is_none() {
+                                let len_arr: [u8; 4] = extracted_all_bytes[0..4].try_into().map_err(|_| 
+                                    ImageError::Decoding(image::error::DecodingError::new(
+                                        image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                                        "Failed to convert extracted length bytes to array".to_string(),
+                                )))?;
+                                payload_len_opt = Some(u32::from_be_bytes(len_arr) as usize);
                             }
-                        }
-                        
-                        if bytes_extracted_count > theoretical_max_bytes + 4 {
-                             return Err(ImageError::Decoding(image::error::DecodingError::new(
-                                image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                                "Potential data corruption: trying to extract more bytes than image capacity.".to_string(),
-                            )));
+
+                            if let Some(len) = payload_len_opt {
+                                if bytes_extracted_count >= 4 + len {
+                                    break 'extraction_loop;
+                                }
+                            }
+                            
+                            if bytes_extracted_count > theoretical_max_bytes + 4 {
+                                 return Err(ImageError::Decoding(image::error::DecodingError::new(
+                                    image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                                    "Potential data corruption: trying to extract more bytes than image capacity.".to_string(),
+                                )));
+                            }
                         }
                     }
                 }

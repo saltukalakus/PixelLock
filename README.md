@@ -25,24 +25,37 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 ### Usage
 
 You can choose the output format for encryption using the `-f` (or `--format`) option:
--   `-f png` (default): The tool embeds the encrypted binary data (salt + nonce + ciphertext) into the pixels of a newly generated PNG image. This is a form of steganography. The output file will have a `.png` extension.
-    -   Optionally, you can provide a base PNG image using the `-b` (or `--base`) option (e.g., `-b base_image.png`). The encrypted data will be embedded into this image. If the base image is too small to hold the data, its content will be tiled onto a new, larger PNG image that is then used as the carrier. If `-b` is not used with `-f png`, a new random PNG is generated.
+-   `-f png` (default): The tool embeds the encrypted binary data (salt + nonce + ciphertext) into the pixels of a PNG image using Least Significant Bit (LSB) steganography. The output file will have a `.png` extension.
+    -   Optionally, you can provide a base PNG image using the `-b` (or `--base`) option (e.g., `-b base_image.png`). The encrypted data will be embedded into this image. If the base image is too small to hold the data, its content will be tiled onto a new, larger PNG image that is then used as the carrier.
+    -   When using `-b` with `-f png`, you can also specify the LSB ratio with `-r <1-4>` (or `--ratio <1-4>`). This determines how many LSBs per color channel are used (default is 1). A higher ratio embeds more data per pixel but increases the visual impact on the base image. `-r` requires `-b`.
+    -   If `-b` is not used with `-f png`, a new random PNG is generated, and 1 LSB per channel is used for embedding.
 -   `-f txt`: The tool stores the encrypted file in a Base64-encoded text format with the `.txt` extension.
 
-When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created. The `-f` and `-b` options apply to all files processed in folder mode.
+**Important Constraints for `-b` and `-r`:**
+-   Both `-b` and `-r` can only be used during encryption (`-e`).
+-   Both `-b` and `-r` require the format to be `png` (`-f png`).
+-   The `-r` option specifically requires that `-b` is also provided.
 
-During decryption, if the input path (`-i`) is a folder, PixelLock will process files with `.txt` or `.png` extensions only, automatically detecting whether they are Base64 encoded or steganographic PNGs.
+When encrypting, if the input path (`-i`) is a folder, PixelLock will automatically process all supported image files within that folder (non-recursively). In this mode, the output path (`-o`) must specify a folder where the processed files will be saved. If the output folder does not exist, it will be created. The `-f`, `-b`, and `-r` options apply to all files processed in folder mode, following the constraints above.
 
-Encrypting a single image (default to steganographic `.png` output, new random PNG):
+During decryption, if the input path (`-i`) is a folder, PixelLock will process files with `.txt` or `.png` extensions only. For `.png` files, it assumes 1 LSB per channel was used for steganography.
+
+Encrypting a single image (default to steganographic `.png` output, new random PNG, 1 LSB):
 ```bash
 ./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name
 # Output will be ./stego_image_base_name.png
 ```
 
-Encrypting a single image into a steganographic PNG using a base image:
+Encrypting a single image into a steganographic PNG using a base image (default 1 LSB):
 ```bash
-./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name -f png -b ./my_base.png
-# Output will be ./stego_image_base_name.png (using my_base.png as a carrier)
+./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name -b ./my_base.png
+# Output will be ./stego_image_base_name.png (using my_base.png as a carrier, 1 LSB)
+```
+
+Encrypting a single image into a steganographic PNG using a base image and 2 LSBs per channel:
+```bash
+./target/release/PixelLock -e -i ./image.jpeg -o ./stego_image_base_name -b ./my_base.png -r 2
+# Output will be ./stego_image_base_name.png (using my_base.png, 2 LSBs)
 ```
 
 Encrypting a single image into a Base64 text file:
@@ -51,17 +64,17 @@ Encrypting a single image into a Base64 text file:
 # Output will be ./encrypted_base_name.txt
 ```
 
-Encrypting all supported files in a folder (default to steganographic PNGs, new random PNGs for each):
+Encrypting all supported files in a folder (default to steganographic PNGs, new random PNGs for each, 1 LSB):
 ```bash
 ./target/release/PixelLock -e -i ./input-folder -o ./output-folder
 ```
 
-Encrypting all supported files in a folder using a single base PNG for all:
+Encrypting all supported files in a folder using a single base PNG and 2 LSBs for all:
 ```bash
-./target/release/PixelLock -e -i ./input-folder -o ./output-folder -f png -b ./my_base.png
+./target/release/PixelLock -e -i ./input-folder -o ./output-folder -b ./my_base.png -r 2
 ```
 
-Decrypting a single image (auto-detects if it's a `.txt` or `.png` encrypted file):
+Decrypting a single image (auto-detects if it's a `.txt` or `.png` encrypted file; for PNG, assumes 1 LSB):
 ```bash
 ./target/release/PixelLock -d -i ./encrypted_file.txt -o ./decrypted_image_base_name
 # Or
