@@ -30,7 +30,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         .map_err(ImageError::IoError)?;
 
     let salt: SaltString = SaltString::generate(&mut OsRng);
-    let derived_key = derive_encryption_key_with_salt(&*secret, &salt);
+    let derived_key = derive_encryption_key_with_salt(secret, &salt);
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce_bytes: [u8; NONCE_STRING_LEN] = OsRng.gen();
@@ -41,7 +41,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
             "Encryption failed".to_string(),
         )))?;
 
-    let salt_bytes_to_store = salt.as_str().as_bytes(); // Changed from salt.as_bytes()
+    let salt_bytes_to_store = salt.as_str().as_bytes();
     assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Generated salt string length does not match expected SALT_STRING_LEN.");
 
     let mut raw_output_payload = Vec::new();
@@ -69,7 +69,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
                 image::error::ParameterErrorKind::Generic("LSB bits per channel cannot be zero.".to_string())
             )));
         }
-        let pixels_needed = (total_bits_to_embed + bits_per_pixel - 1) / bits_per_pixel;
+        let pixels_needed = total_bits_to_embed.div_ceil(bits_per_pixel);
 
         let mut carrier_image: RgbImage;
 
@@ -103,7 +103,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
                     new_height *= 2; 
                 }
                 if new_width == 0 { new_width = (pixels_needed as f64).sqrt().ceil() as u32; }
-                if new_height == 0 { new_height = (pixels_needed as u32 + new_width - 1) / new_width; }
+                if new_height == 0 { new_height = (pixels_needed as u32).div_ceil(new_width); }
                 if new_width == 0 { new_width = 1; }
                 if new_height == 0 { new_height = 1; }
 
@@ -125,7 +125,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
             }
         } else {
             let width = (pixels_needed as f64).sqrt().ceil() as u32;
-            let mut height = (pixels_needed as u32 + width - 1) / width;
+            let mut height = (pixels_needed as u32).div_ceil(width);
             if width == 0 { return Err(ImageError::Parameter(image::error::ParameterError::from_kind(image::error::ParameterErrorKind::Generic("Calculated width is zero for new image".into())))); }
             if height == 0 { height = 1; }
 
@@ -226,8 +226,8 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
             for x in 0..width {
                 let pixel_channels = carrier_image.get_pixel(x,y).0;
 
-                for channel_idx in 0..3 {
-                    let extracted_bits_from_channel = pixel_channels[channel_idx] & data_extract_mask_decrypt; 
+                for &channel_value in pixel_channels.iter().take(3) {
+                    let extracted_bits_from_channel = channel_value & data_extract_mask_decrypt; 
                     
                     for bit_k in 0..lsb_bits_per_channel_decrypt {
                         let current_extracted_bit = (extracted_bits_from_channel >> bit_k) & 1;
@@ -302,14 +302,14 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     let salt_str = std::str::from_utf8(salt_string_bytes).map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
         image::error::ImageFormatHint::Unknown, "Invalid salt UTF-8".to_string()
     )))?;
-    let salt = SaltString::from_b64(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new( // Changed from SaltString::new
+    let salt = SaltString::from_b64(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
         image::error::ImageFormatHint::Unknown, format!("Invalid salt format: {}", e)
     )))?;
 
-    let derived_key = derive_encryption_key_with_salt(&*secret, &salt);
+    let derived_key = derive_encryption_key_with_salt(secret, &salt);
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce = Nonce::from_slice(nonce_bytes); // Define nonce here
     let decrypted_data = cipher.decrypt(nonce, ciphertext)
         .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
             image::error::ImageFormatHint::Unknown,
@@ -337,7 +337,7 @@ pub fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
         Some("jpeg")
     } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         Some("png")
-    } else if decrypted_data.starts_with(&[b'B', b'M']) {
+    } else if decrypted_data.starts_with(b"BM") {
         Some("bmp")
     } else if decrypted_data.starts_with(b"GIF87a") || decrypted_data.starts_with(b"GIF89a") {
         Some("gif")

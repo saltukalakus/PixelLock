@@ -140,7 +140,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
     let output_dir = Path::new(output_dir_str);
 
     if !output_dir.exists() {
-        if let Err(e) = fs::create_dir_all(&output_dir) {
+        if let Err(e) = fs::create_dir_all(output_dir) {
             eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
             std::process::exit(1);
         }
@@ -246,22 +246,18 @@ fn main() {
             eprintln!("Error: --ratio (-r) option cannot be used with decryption mode (-d).");
             std::process::exit(1);
         }
-    } else {
-        if output_format_preference == "txt" {
-            if base_image_path_str_opt.is_some() {
-                eprintln!("Error: --base (-b) option can only be used with --format png.");
-                std::process::exit(1);
-            }
-            if user_explicitly_set_ratio {
-                eprintln!("Error: --ratio (-r) option can only be used with --format png.");
-                std::process::exit(1);
-            }
-        } else {
-            if user_explicitly_set_ratio && base_image_path_str_opt.is_none() {
-                eprintln!("Error: --ratio (-r) option requires a base image to be specified with --base (-b) when using --format png.");
-                std::process::exit(1);
-            }
+    } else if output_format_preference == "txt" {
+        if base_image_path_str_opt.is_some() {
+            eprintln!("Error: --base (-b) option can only be used with --format png.");
+            std::process::exit(1);
         }
+        if user_explicitly_set_ratio {
+            eprintln!("Error: --ratio (-r) option can only be used with --format png.");
+            std::process::exit(1);
+        }
+    } else if user_explicitly_set_ratio && base_image_path_str_opt.is_none() {
+        eprintln!("Error: --ratio (-r) option requires a base image to be specified with --base (-b) when using --format png.");
+        std::process::exit(1);
     }
 
     let lsb_bits_for_encryption = if output_format_preference == "png" {
