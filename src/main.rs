@@ -75,7 +75,7 @@ fn build_cli_app() -> ArgMatches {
     Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("Encrypts and decrypts images. \nIf -i is a folder, processes all supported files in that folder and -o must be an output folder.")
+        .about("\nEncrypts and decrypts images.")
         .arg(
             Arg::new("decrypt")
                 .short('d')
@@ -96,7 +96,7 @@ fn build_cli_app() -> ArgMatches {
                 .long("input")
                 .required(true)
                 .value_parser(clap::value_parser!(String))
-                .help("Path to the input file or folder"),
+                .help("Path to the input file or folder. If -i is a folder, processes all supported files in that folder and -o must be an output folder."),
         )
         .arg(
             Arg::new("output")
