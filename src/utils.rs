@@ -41,7 +41,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
             "Encryption failed".to_string(),
         )))?;
 
-    let salt_bytes_to_store = salt.as_bytes();
+    let salt_bytes_to_store = salt.as_str().as_bytes(); // Changed from salt.as_bytes()
     assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Generated salt string length does not match expected SALT_STRING_LEN.");
 
     let mut raw_output_payload = Vec::new();
@@ -302,7 +302,7 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     let salt_str = std::str::from_utf8(salt_string_bytes).map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
         image::error::ImageFormatHint::Unknown, "Invalid salt UTF-8".to_string()
     )))?;
-    let salt = SaltString::new(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
+    let salt = SaltString::from_b64(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new( // Changed from SaltString::new
         image::error::ImageFormatHint::Unknown, format!("Invalid salt format: {}", e)
     )))?;
 

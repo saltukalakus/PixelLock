@@ -75,7 +75,8 @@ fn build_cli_app() -> ArgMatches {
     Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
-        .about("\nEncrypts and decrypts images.")
+        .about("\nPixelLock is a command-line tool to secure your pictures with military-grade encryption. 
+                \nIt helps enhance privacy and provide an additional layer of security while storing images.")
         .arg(
             Arg::new("decrypt")
                 .short('d')
