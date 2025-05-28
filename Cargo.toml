@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-argon2 = "0.5" # 
+argon2 = "0.5.3"
 aes-gcm = "0.10.3" 
-image = "0.25.6"   
-rand = "0.8.5"     # Downgraded from 0.9.1
-clap = "4.5"     
+image = "0.25.6"
+rand = "0.8.5"
+clap = "4.5.4" 
 rpassword = "7.4" 
 zeroize = { version = "1.8.1", features = ["alloc"] }
-base64 = "0.22.1" # For Base64 encoding/decoding
+base64 = "0.22.1"
