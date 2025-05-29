@@ -33,7 +33,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     secret: &Zeroizing<String>,
     output_format_preference: &str,
     base_image_path_opt: Option<P3>,
-    lsb_bits_per_channel: u8, // New parameter
+    lsb_bits_per_channel: u8, 
 ) -> Result<String, ImageError> {
     let original_format_str = input_image_path
         .as_ref()
@@ -84,23 +84,32 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         fs::write(&final_output_path, base64_encoded_data)?;
         println!("Image encrypted successfully to (Base64 TXT): {:?}", final_output_path);
     } else if output_format_preference == "png" {
-        // Embed the payload into a PNG image using LSB steganography.
-        // Prepend the payload with its length (4 bytes, big-endian).
+        // Steganography for PNG
+        // Header: [1 byte for lsb_bits_per_channel used for payload] + [4 bytes for raw_output_payload length]
+        // Payload: raw_output_payload
+        
+        let lsb_config_byte = lsb_bits_per_channel; // u8, values 1-4
         let payload_len_bytes = (raw_output_payload.len() as u32).to_be_bytes();
-        let mut data_to_embed = Vec::with_capacity(4 + raw_output_payload.len());
-        data_to_embed.extend_from_slice(&payload_len_bytes);
-        data_to_embed.extend_from_slice(&raw_output_payload);
 
-        // Calculate total bits to embed and bits available per pixel.
-        let total_bits_to_embed = data_to_embed.len() * 8;
-        let bits_per_pixel = 3 * lsb_bits_per_channel as usize; // 3 channels (R,G,B)
-        if bits_per_pixel == 0 {
+        let mut header_to_embed = vec![lsb_config_byte];
+        header_to_embed.extend_from_slice(&payload_len_bytes); // 5 bytes total for header
+
+        let total_header_bits = header_to_embed.len() * 8;
+        let total_payload_bits = raw_output_payload.len() * 8;
+
+        let lsb_for_header: u8 = 1; // Header is always embedded with 1 LSB per channel
+        let bits_per_pixel_header = 3 * lsb_for_header as usize;
+        let bits_per_pixel_payload = 3 * lsb_bits_per_channel as usize;
+
+        if bits_per_pixel_payload == 0 {
             return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                image::error::ParameterErrorKind::Generic("LSB bits per channel cannot be zero.".to_string())
+                image::error::ParameterErrorKind::Generic("LSB bits per channel for payload cannot be zero.".to_string())
             )));
         }
-        // Calculate the number of pixels needed in the carrier image.
-        let pixels_needed = total_bits_to_embed.div_ceil(bits_per_pixel);
+
+        let pixels_needed_for_header = total_header_bits.div_ceil(bits_per_pixel_header);
+        let pixels_needed_for_payload = total_payload_bits.div_ceil(bits_per_pixel_payload);
+        let pixels_needed = pixels_needed_for_header + pixels_needed_for_payload;
 
         let mut carrier_image: RgbImage;
 
@@ -175,50 +184,81 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         }
         
         // Embed data into the carrier image using LSB steganography.
-        let mut bit_idx_overall = 0; 
         let (img_width, img_height) = carrier_image.dimensions();
-        
-        // Mask to clear the LSBs that will be used for data.
-        let clear_mask: u8 = 0xFF << lsb_bits_per_channel;
-        // Mask to extract the LSBs from the data bits.
-        let data_extract_mask: u8 = (1 << lsb_bits_per_channel) - 1;
+        let mut bit_idx_overall = 0;
+        let mut current_data_source_byte_idx = 0;
+        let mut current_data_source_bit_idx = 0;
+        let mut embedding_header = true;
 
         'embedding_loop: for y in 0..img_height {
             for x in 0..img_width {
-                if bit_idx_overall >= total_bits_to_embed {
-                    break 'embedding_loop; // All data embedded.
-                }
                 let pixel = carrier_image.get_pixel_mut(x, y);
                 
-                // Iterate over R, G, B channels.
                 for channel_idx in 0..3 {
-                    if bit_idx_overall >= total_bits_to_embed {
-                        break 'embedding_loop; // All data embedded.
-                    }
-                    
-                    // Collect `lsb_bits_per_channel` bits from the data to embed in this channel.
-                    let mut bits_for_channel: u8 = 0;
-                    for bit_k in 0..lsb_bits_per_channel {
-                        if bit_idx_overall < total_bits_to_embed {
-                            let data_byte_idx = bit_idx_overall / 8;
-                            let bit_in_byte_idx = bit_idx_overall % 8;
-                            let current_data_bit = (data_to_embed[data_byte_idx] >> bit_in_byte_idx) & 1;
-                            bits_for_channel |= current_data_bit << bit_k;
-                            bit_idx_overall += 1;
+                    let total_bits_for_current_stage = if embedding_header { total_header_bits } else { total_payload_bits };
+                    if bit_idx_overall >= total_bits_for_current_stage {
+                        if embedding_header {
+                            embedding_header = false; // Switch to payload
+                            bit_idx_overall = 0; // Reset bit index for payload
+                            current_data_source_byte_idx = 0;
+                            current_data_source_bit_idx = 0;
+                            if total_payload_bits == 0 { break 'embedding_loop; } // No payload to embed
                         } else {
-                            break; // No more data bits to embed.
+                            break 'embedding_loop; // All data (header and payload) embedded.
                         }
                     }
-                    // Clear LSBs of the original pixel channel and set the new data bits.
-                    pixel.0[channel_idx] = (pixel.0[channel_idx] & clear_mask) | (bits_for_channel & data_extract_mask);
+                    
+                    // Re-evaluate masks and LSBs for the current stage (header or payload)
+                    let (active_data_source, active_lsb_bits, active_total_bits) = if embedding_header {
+                        (&header_to_embed, lsb_for_header, total_header_bits)
+                    } else {
+                        (&raw_output_payload, lsb_bits_per_channel, total_payload_bits)
+                    };
+
+                    if bit_idx_overall >= active_total_bits { // Check again after potential stage switch
+                         if embedding_header { // Should not happen if logic above is correct
+                             embedding_header = false; 
+                             bit_idx_overall = 0; 
+                             current_data_source_byte_idx = 0;
+                             current_data_source_bit_idx = 0;
+                             if total_payload_bits == 0 { break 'embedding_loop; }
+                             continue; // restart channel loop with new settings
+                         } else {
+                             break 'embedding_loop;
+                         }
+                    }
+
+                    let current_clear_mask: u8 = 0xFF << active_lsb_bits;
+                    let current_data_extract_mask: u8 = (1 << active_lsb_bits) - 1;
+
+                    let mut bits_for_channel: u8 = 0;
+                    for bit_k in 0..active_lsb_bits {
+                        if bit_idx_overall < active_total_bits {
+                            let data_byte = active_data_source[current_data_source_byte_idx];
+                            let current_data_bit = (data_byte >> current_data_source_bit_idx) & 1;
+                            bits_for_channel |= current_data_bit << bit_k;
+                            
+                            bit_idx_overall += 1;
+                            current_data_source_bit_idx += 1;
+                            if current_data_source_bit_idx == 8 {
+                                current_data_source_bit_idx = 0;
+                                current_data_source_byte_idx += 1;
+                            }
+                        } else {
+                            break; 
+                        }
+                    }
+                    pixel.0[channel_idx] = (pixel.0[channel_idx] & current_clear_mask) | (bits_for_channel & current_data_extract_mask);
                 }
             }
         }
         
         // Ensure all data was embedded.
-        if bit_idx_overall < total_bits_to_embed {
-            return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                image::error::ParameterErrorKind::Generic("Carrier image too small to embed all data bits.".to_string())
+        if embedding_header || bit_idx_overall < total_payload_bits {
+             return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
+                image::error::ParameterErrorKind::Generic(
+                    format!("Carrier image too small. Header embedded: {}, Payload bits embedded: {}/{}.", !embedding_header, bit_idx_overall, total_payload_bits)
+                )
             )));
         }
 
@@ -271,94 +311,183 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
         
-        // For decryption, assume 1 LSB per channel was used to store the length and payload.
-        // This is a fixed assumption for the extraction part. The actual encryption might use more for data,
-        // but the length header is assumed to be 1 LSB for robustness.
-        // TODO: Consider making LSB bits for length header configurable or stored if encryption uses variable LSBs.
-        let lsb_bits_per_channel_decrypt: u8 = 1; 
-        let data_extract_mask_decrypt: u8 = (1 << lsb_bits_per_channel_decrypt) - 1;
-
-        let mut extracted_all_bytes = Vec::new();
+        let mut extracted_bytes_buffer = Vec::new();
         let mut current_reconstructed_byte: u8 = 0;
         let mut bits_in_current_byte: u8 = 0;
-        
-        let mut payload_len_opt: Option<usize> = None;
         let mut bytes_extracted_count = 0;
 
-        // Theoretical maximum bytes that could be stored, as a sanity check.
-        let theoretical_max_bytes = (width as usize * height as usize * 3 * lsb_bits_per_channel_decrypt as usize) / 8;
+        // Stage 1: Extract Header (5 bytes: 1 for LSB config, 4 for payload length)
+        // Header is always extracted using 1 LSB per channel.
+        let lsb_bits_for_header: u8 = 1;
+        let data_extract_mask_header: u8 = (1 << lsb_bits_for_header) - 1;
+        let header_len_bytes: usize = 5;
+        
+        println!("Attempting to extract steganography header ({} bytes using {} LSB/channel)...", header_len_bytes, lsb_bits_for_header);
 
-
-        'extraction_loop: for y in 0..height {
+        'header_extraction_loop: for y in 0..height {
             for x in 0..width {
-                let pixel_channels = carrier_image.get_pixel(x,y).0; // R, G, B values
-
-                // Iterate over R, G, B channels.
+                let pixel_channels = carrier_image.get_pixel(x,y).0;
                 for &channel_value in pixel_channels.iter().take(3) {
-                    // Extract LSBs from the current channel.
-                    let extracted_bits_from_channel = channel_value & data_extract_mask_decrypt; 
-                    
-                    // Reconstruct bytes from the extracted bits.
-                    for bit_k in 0..lsb_bits_per_channel_decrypt {
-                        let current_extracted_bit = (extracted_bits_from_channel >> bit_k) & 1;
+                    for bit_k in 0..lsb_bits_for_header {
+                        let current_extracted_bit = (channel_value >> bit_k) & data_extract_mask_header; // Mask ensures we only consider relevant bits if lsb_bits_for_header > 1, though it's 1 here.
+                                                                                                    // For LSB=1, (val >> 0) & 1 is just val & 1.
                         current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
                         bits_in_current_byte += 1;
 
                         if bits_in_current_byte == 8 {
-                            // Full byte reconstructed.
-                            extracted_all_bytes.push(current_reconstructed_byte);
+                            extracted_bytes_buffer.push(current_reconstructed_byte);
                             bytes_extracted_count += 1;
                             current_reconstructed_byte = 0;
                             bits_in_current_byte = 0;
 
-                            // After extracting 4 bytes, interpret them as the payload length.
-                            if bytes_extracted_count == 4 && payload_len_opt.is_none() {
-                                let len_arr: [u8; 4] = extracted_all_bytes[0..4].try_into().map_err(|_| 
-                                    ImageError::Decoding(image::error::DecodingError::new(
-                                        image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                                        "Failed to convert extracted length bytes to array".to_string(),
-                                )))?;
-                                payload_len_opt = Some(u32::from_be_bytes(len_arr) as usize);
-                            }
-
-                            // If payload length is known, stop after extracting all payload bytes.
-                            if let Some(len) = payload_len_opt {
-                                if bytes_extracted_count >= 4 + len { // 4 bytes for length + payload
-                                    break 'extraction_loop;
-                                }
-                            }
-                            
-                            // Sanity check against theoretical maximum.
-                            if bytes_extracted_count > theoretical_max_bytes + 4 { // +4 for length
-                                 return Err(ImageError::Decoding(image::error::DecodingError::new(
-                                    image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                                    "Potential data corruption: trying to extract more bytes than image capacity.".to_string(),
-                                )));
+                            if bytes_extracted_count == header_len_bytes {
+                                break 'header_extraction_loop;
                             }
                         }
                     }
                 }
+                 if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
             }
+             if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
+        }
+
+        if bytes_extracted_count < header_len_bytes {
+            return Err(ImageError::Decoding(image::error::DecodingError::new(
+                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                format!("Steganography PNG too small to extract full header. Expected {} bytes, got {}.", header_len_bytes, bytes_extracted_count),
+            )));
         }
         
-        // Ensure payload length was found and enough data was extracted.
-        if payload_len_opt.is_none() || extracted_all_bytes.len() < 4 {
-             return Err(ImageError::Decoding(image::error::DecodingError::new(
+        let lsb_bits_for_payload = extracted_bytes_buffer[0];
+        if !(1..=4).contains(&lsb_bits_for_payload) {
+            return Err(ImageError::Decoding(image::error::DecodingError::new(
                 image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                "Steganography PNG too small to extract payload length".to_string(),
+                format!("Invalid LSB configuration in steganography header: {} (must be 1-4).", lsb_bits_for_payload),
             )));
         }
-        let payload_len = payload_len_opt.unwrap();
 
-        if extracted_all_bytes.len() < 4 + payload_len {
-             return Err(ImageError::Decoding(image::error::DecodingError::new(
+        let payload_len_arr: [u8; 4] = extracted_bytes_buffer[1..5].try_into()
+            .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
                 image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", payload_len, extracted_all_bytes.len() - 4),
+                "Failed to convert extracted payload length bytes.".to_string(),
+            )))?;
+        let payload_len = u32::from_be_bytes(payload_len_arr) as usize;
+        
+        println!("Header extracted: LSBs for payload = {}, Payload length = {}. Attempting to extract payload...", lsb_bits_for_payload, payload_len);
+
+        // Stage 2: Extract Payload
+        // current_reconstructed_byte and bits_in_current_byte are already reset or hold partial bits from header extraction's end.
+        // We need to know the exact pixel and channel where header extraction stopped.
+        // For simplicity, we restart pixel iteration but skip pixels already processed for header.
+        // This is inefficient. A better way is to continue from the exact bit position.
+
+        // Let's refine to continue from the exact position.
+        // We need to track current x, y, channel_idx from header loop.
+        // The previous loop structure is better: iterate pixels, and inside, decide if extracting header or payload.
+        // Re-doing extraction loop structure:
+
+        let mut all_extracted_data_bytes = Vec::new();
+        current_reconstructed_byte = 0; // Reset for clarity, though might carry over if header extraction didn't end on a byte boundary.
+        bits_in_current_byte = 0;       // This is critical.
+        bytes_extracted_count = 0;      // Counts bytes for the current stage (header then payload)
+
+        let mut lsb_config_for_payload_opt: Option<u8> = None;
+        let mut actual_payload_len_opt: Option<usize> = None;
+        let mut extracting_header_stage = true;
+        
+        // Calculate starting pixel/channel for payload if we were to optimize.
+        // For now, a single loop that changes behavior.
+
+        'full_extraction_loop: for y_img in 0..height {
+            for x_img in 0..width {
+                let pixel_channels_val = carrier_image.get_pixel(x_img, y_img).0;
+                for &channel_val_pix in pixel_channels_val.iter().take(3) { // Changed from range loop
+                    let lsb_to_use_now = if extracting_header_stage { // Initialized directly
+                        lsb_bits_for_header
+                    } else {
+                        lsb_config_for_payload_opt.unwrap_or(1) // Should be set
+                    };
+
+                    // let channel_val_pix = pixel_channels_val[channel_idx_val]; // Removed, loop var is now channel_val_pix
+                    for bit_k_idx in 0..lsb_to_use_now {
+                        let current_extracted_bit = (channel_val_pix >> bit_k_idx) & 1; // Always extract one bit at a time from LSBs
+                        current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
+                        bits_in_current_byte += 1;
+
+                        if bits_in_current_byte == 8 {
+                            all_extracted_data_bytes.push(current_reconstructed_byte);
+                            bytes_extracted_count += 1; // This counts bytes for the current stage
+                            current_reconstructed_byte = 0;
+                            bits_in_current_byte = 0;
+
+                            if extracting_header_stage && bytes_extracted_count == header_len_bytes {
+                                // Header fully extracted
+                                let lsb_val = all_extracted_data_bytes[0];
+                                if !(1..=4).contains(&lsb_val) {
+                                     return Err(ImageError::Decoding(image::error::DecodingError::new(
+                                        image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                                        format!("Invalid LSB config in header: {}", lsb_val))));
+                                }
+                                lsb_config_for_payload_opt = Some(lsb_val);
+
+                                let len_arr_payload: [u8; 4] = all_extracted_data_bytes[1..5].try_into().unwrap();
+                                actual_payload_len_opt = Some(u32::from_be_bytes(len_arr_payload) as usize);
+                                
+                                println!("Steg Header Decoded: LSBs for payload: {}, Payload length: {}", lsb_val, actual_payload_len_opt.unwrap());
+
+                                extracting_header_stage = false;
+                                bytes_extracted_count = 0; // Reset for payload byte count
+                                all_extracted_data_bytes.clear(); // Clear buffer, it was for header
+
+                                if actual_payload_len_opt.unwrap() == 0 {
+                                    break 'full_extraction_loop; // No payload to extract
+                                }
+                            } else if !extracting_header_stage &&
+                                      (actual_payload_len_opt == Some(bytes_extracted_count))
+                            {
+                                // Payload fully extracted
+                                break 'full_extraction_loop;
+                            }
+                        }
+                    }
+                     // Check after each channel if done
+                    if !extracting_header_stage &&
+                       actual_payload_len_opt.is_some_and(|len_val|
+                           bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0)
+                       )
+                    {
+                        break 'full_extraction_loop;
+                    }
+                }
+                // Check after each pixel if done
+                if !extracting_header_stage &&
+                   actual_payload_len_opt.is_some_and(|len_val|
+                       bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0)
+                   )
+                {
+                    break 'full_extraction_loop;
+                }
+            }
+        }
+
+        if extracting_header_stage || lsb_config_for_payload_opt.is_none() || actual_payload_len_opt.is_none() {
+            return Err(ImageError::Decoding(image::error::DecodingError::new(
+                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                "Failed to extract steganography header or determine payload parameters.".to_string(),
             )));
         }
-        // The actual encrypted payload is after the 4-byte length.
-        encrypted_file_data_payload = extracted_all_bytes[4..4 + payload_len].to_vec();
-        println!("Decrypting from Steganography PNG file (LSB): {:?}", input_encrypted_path);
+        
+        let final_payload_len = actual_payload_len_opt.unwrap();
+        if all_extracted_data_bytes.len() < final_payload_len {
+             return Err(ImageError::Decoding(image::error::DecodingError::new(
+                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+                format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", final_payload_len, all_extracted_data_bytes.len()),
+            )));
+        }
+        
+        encrypted_file_data_payload = all_extracted_data_bytes; // These are the actual payload bytes
+        println!("Decrypting from Steganography PNG file (LSB {}): {:?}", lsb_config_for_payload_opt.unwrap(), input_encrypted_path);
+
     } else {
         return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
             image::error::ImageFormatHint::Unknown,
@@ -607,14 +736,14 @@ mod tests {
         let decrypted_path_base = temp_dir.path().join("test_decrypted_steg");
 
         // Create a small dummy PNG file as input data to encrypt
-        let original_png_width = 10;
-        let original_png_height = 5;
+        let original_png_width = 20; // Increased size slightly for more bits
+        let original_png_height = 10;
         create_dummy_png(&input_image_path, original_png_width, original_png_height)?;
         let original_data = fs::read(&input_image_path)?;
 
         let secret = Zeroizing::new("anotherStrongPassword!$5^".to_string());
         let output_format_preference = "png";
-        let lsb_bits: u8 = 1; // Use 1 LSB to match decryption logic assumption
+        let lsb_bits: u8 = 2; // Use 2 LSBs to test new logic
 
         // Encrypt
         let original_input_format = encrypt_image(
@@ -657,15 +786,15 @@ mod tests {
         let decrypted_path_base = temp_dir.path().join("test_decrypted_steg_w_base");
 
         // Create content to encrypt (can be anything, e.g., text data)
-        let data_to_encrypt = b"Short payload for steganography with base image.";
+        let data_to_encrypt = b"A bit longer payload for steganography with base image to ensure multiple pixels are used with multi-LSB.";
         fs::write(&input_image_path, data_to_encrypt)?;
         
-        // Create a small base PNG image
-        create_dummy_png(&base_image_path, 20, 20)?; // Ensure it's large enough
+        // Create a base PNG image
+        create_dummy_png(&base_image_path, 30, 30)?; // Ensure it's large enough
 
         let secret = Zeroizing::new("passwordForStegWithBase123$%^".to_string());
         let output_format_preference = "png";
-        let lsb_bits: u8 = 1; // Use 1 LSB to match decryption logic assumption
+        let lsb_bits: u8 = 3; // Use 3 LSBs to test new logic
 
         // Encrypt
         encrypt_image(

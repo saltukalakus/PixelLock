@@ -4,8 +4,6 @@ PixelLock is a command-line tool to secure your pictures with military-grade enc
 
 Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
 
-In the default operation mode, the secret image is blended into a carrier PNG image. 
-
 ![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
 
 ### Build Requirements
@@ -45,23 +43,11 @@ For a full list of available options, try the help command:
 
 ### Security Challenge
 
-This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can generate one of the original images, you win **500 GBP**! 
+This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). 
 
-All of the images are hiding different secret images. The base image and password used are the same in all samples. The samples are encrypted with the default usage shown in the Usage section of this README file.
+If you can generate one of the original images, you win **500 GBP**! 
 
-**Rules:**
-
-1. You should not target or attack my computer or any of my online accounts. Accessing the image that way is not eligible for the reward.
-
-2. The accepted method for the reward is through finding a vulnerability in this project or its dependencies and leveraging it to bypass the security. 
-
-3. If you brute-force the secret and that works, you need to share proof of your brute-force attempt. I suggest not going that route, as it would probably be impractical. However, if you find a way to minimize the possible set of secrets to brute-force, that may be a valid approach.
-
-4. Open an issue in this repository, upload one of the original images, and ping me @saltukalakus. Please do not disclose how you were able to bypass the encryption. I will reach out to you to understand how you bypassed it.
-
-5. Only the **first** hacker who opens an issue with the correct image wins.
-
-6. The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one has found it by then.
+You may find the the rules and other details [here](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c#file-1description-md) in the same Gist.
 
 ### Disclaimer 
 
