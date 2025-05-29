@@ -1,60 +1,21 @@
 use std::{fs, io::{self, Write}, path::{Path}};
-use clap::{Arg, ArgAction, Command, ArgMatches};
+use clap::{Arg, ArgAction, Command}; // Removed ArgMatches
 use rpassword::read_password;
 use zeroize::Zeroizing;
 
 mod utils;
-
-/// Validates the complexity of a given password.
-///
-/// # Arguments
-/// * `password` - The password string to validate.
-///
-/// # Returns
-/// * `true` if the password meets all complexity requirements.
-/// * `false` otherwise, and prints an error message.
-fn validate_password_complexity(password: &str) -> bool {
-    // Check minimum length.
-    if password.len() < 16 {
-        eprintln!("Error: Password must be at least 16 characters long.");
-        return false;
-    }
-    // Check for character types.
-    let has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
-    let has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
-    let has_digit = password.chars().any(|c| c.is_ascii_digit());
-    let has_symbol = password.chars().any(|c| c.is_ascii_punctuation() || c.is_ascii_graphic() && !c.is_ascii_alphanumeric());
-
-    if !has_uppercase {
-        eprintln!("Error: Password must contain at least one uppercase letter.");
-        return false;
-    }
-    if !has_lowercase {
-        eprintln!("Error: Password must contain at least one lowercase letter.");
-        return false;
-    }
-    if !has_digit {
-        eprintln!("Error: Password must contain at least one digit.");
-        return false;
-    }
-    if !has_symbol {
-        eprintln!("Error: Password must contain at least one symbol (e.g., !@#$%^&*).");
-        return false;
-    }
-    true
-}
 
 /// Prompts the user for a secret (password) and validates it if in encryption mode.
 /// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.
 ///
 /// # Arguments
 /// * `is_encryption_mode` - `true` if called during encryption (requires confirmation and complexity check),
-///                          `false` if called during decryption (prompts once).
+///   `false` if called during decryption (prompts once).
 ///
 /// # Returns
 /// * A `Zeroizing<String>` containing the user's secret.
 fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
-    if is_encryption_mode {
+    if is_encryption_mode { // Removed parentheses
         // Encryption mode: prompt for new secret, validate complexity, and confirm.
         loop {
             print!("Enter your new secret: ");
@@ -62,7 +23,7 @@ fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
             let secret1_plain = read_password().expect("Failed to read secret");
 
             // Validate complexity for new secrets.
-            if !validate_password_complexity(&secret1_plain) {
+            if !utils::validate_password_complexity(&secret1_plain) {
                 println!("Please try again, ensuring the password meets all complexity requirements.");
                 continue;
             }
@@ -100,8 +61,8 @@ fn validate_file_exists(file_path: &str) {
 /// Defines all available arguments, options, and help messages.
 ///
 /// # Returns
-/// * `ArgMatches` containing the parsed command-line arguments.
-fn build_cli_app() -> ArgMatches {
+/// * `Command` object for further processing (e.g., getting matches).
+fn build_cli_command() -> Command { // Renamed and changed return type
     Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
@@ -165,7 +126,6 @@ fn build_cli_app() -> ArgMatches {
                 .required(false)
                 .help("LSB ratio (1-4) for steganography when using a base image (-b) with PNG format. Higher means more data per pixel but more visible change.")
         )
-        .get_matches()
 }
 
 /// Processes all supported files in an input directory for encryption or decryption.
@@ -282,7 +242,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
 /// and dispatches to either single file processing or folder processing mode.
 fn main() {
     // Parse command-line arguments.
-    let matches = build_cli_app();
+    let matches = build_cli_command().get_matches(); // Call get_matches here
 
     // Extract operation mode and format preferences.
     let is_decrypt = matches.get_flag("decrypt");
@@ -370,5 +330,17 @@ fn main() {
                 eprintln!("Error decrypting file: {}", e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_cli_app_runs() {
+        // This test primarily ensures that building the CLI app does not panic.
+        let _ = build_cli_command(); // Call the function that returns Command
+                                 // No .get_matches() here to avoid parsing actual CLI args during test
     }
 }

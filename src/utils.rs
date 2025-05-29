@@ -467,3 +467,279 @@ pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> [u8; 
     // Argon2 output can be longer than 32 bytes depending on params; we take the first 32 bytes for AES-256.
     key_bytes[..32].try_into().expect("Derived key should be 32 bytes")
 }
+
+/// Validates the complexity of a given password.
+///
+/// # Arguments
+/// * `password` - The password string to validate.
+///
+/// # Returns
+/// * `true` if the password meets all complexity requirements.
+/// * `false` otherwise, and prints an error message.
+pub fn validate_password_complexity(password: &str) -> bool {
+    // Check minimum length.
+    if password.len() < 16 {
+        eprintln!("Error: Password must be at least 16 characters long.");
+        return false;
+    }
+    // Check for character types.
+    let has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
+    let has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    let has_symbol = password.chars().any(|c| c.is_ascii_punctuation() || c.is_ascii_graphic() && !c.is_ascii_alphanumeric());
+
+    if !has_uppercase {
+        eprintln!("Error: Password must contain at least one uppercase letter.");
+        return false;
+    }
+    if !has_lowercase {
+        eprintln!("Error: Password must contain at least one lowercase letter.");
+        return false;
+    }
+    if !has_digit {
+        eprintln!("Error: Password must contain at least one digit.");
+        return false;
+    }
+    if !has_symbol {
+        eprintln!("Error: Password must contain at least one symbol (e.g., !@#$%^&*).");
+        return false;
+    }
+    true
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir; // For creating temporary directories for tests
+
+    // Helper function to create a dummy PNG file for testing base image functionality.
+    fn create_dummy_png(path: &Path, width: u32, height: u32) -> Result<(), ImageError> {
+        let mut img = RgbImage::new(width, height);
+        for pixel in img.pixels_mut() {
+            *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
+        }
+        img.save_with_format(path, ImageFormat::Png)?; // Explicitly save as PNG
+        Ok(())
+    }
+
+    #[test]
+    fn test_derive_encryption_key_deterministic() {
+        let secret = "test_password";
+        let salt = SaltString::from_b64("gIq+kM3PS2s7gKbtLgGjGA").unwrap(); // Fixed salt for testing
+
+        let key1 = derive_encryption_key_with_salt(secret, &salt);
+        let key2 = derive_encryption_key_with_salt(secret, &salt);
+
+        assert_eq!(key1.len(), 32);
+        assert_eq!(key1, key2, "Key derivation should be deterministic for the same secret and salt.");
+    }
+
+    #[test]
+    fn test_detect_file_format_known() {
+        assert_eq!(detect_file_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("jpeg"));
+        assert_eq!(detect_file_format(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]), Some("png"));
+        assert_eq!(detect_file_format(b"BMxxxx"), Some("bmp")); // "xxxx" are placeholders for size etc.
+        assert_eq!(detect_file_format(b"GIF89a"), Some("gif"));
+        assert_eq!(detect_file_format(&[0x49, 0x49, 0x2A, 0x00]), Some("tiff")); // TIFF Little Endian
+        assert_eq!(detect_file_format(&[0x4D, 0x4D, 0x00, 0x2A]), Some("tiff")); // TIFF Big Endian
+        assert_eq!(detect_file_format(b"RIFFxxxxWEBPVP8 "), Some("webp")); // "xxxx" and "VP8 " are part of WEBP
+    }
+
+    #[test]
+    fn test_detect_file_format_unknown() {
+        assert_eq!(detect_file_format(b"this is not an image"), None);
+        assert_eq!(detect_file_format(&[0x01, 0x02, 0x03, 0x04]), None);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_round_trip_txt() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_image_path = temp_dir.path().join("test_input.dat");
+        let encrypted_path = temp_dir.path().join("test_encrypted"); // Extension added by encrypt_image
+        let decrypted_path = temp_dir.path().join("test_decrypted"); // Extension added by decrypt_image
+
+        let original_data = b"This is some test image data for TXT format.";
+        fs::write(&input_image_path, original_data)?;
+
+        let secret = Zeroizing::new("supersecretpassword123!@#".to_string());
+        let output_format_preference = "txt";
+        let lsb_bits: u8 = 1; // Not used for txt, but required by function signature
+
+        // Encrypt
+        encrypt_image(
+            &input_image_path,
+            &encrypted_path, // encrypt_image will add .txt
+            &secret,
+            output_format_preference,
+            None::<PathBuf>, // No base image for txt
+            lsb_bits,
+        )?;
+
+        let encrypted_file_with_ext = encrypted_path.with_extension("txt");
+        assert!(encrypted_file_with_ext.exists(), "Encrypted TXT file should exist.");
+
+        // Decrypt
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path, // decrypt_image will try to detect extension
+            &secret,
+        )?;
+        
+        // Assuming decrypt_image saves with a detected extension or no extension if unknown
+        // For this test, we expect it to be raw data, so we check the path without specific extension first
+        // or with a common one if detect_file_format returns None and saves as is.
+        // Since original_data is not a known image format, detect_file_format will return None.
+        // The decrypt_image function will then save it without an extension (using output_decrypted_path_base as is).
+        let decrypted_data_content = fs::read(&decrypted_path)?;
+
+        assert_eq!(original_data.to_vec(), decrypted_data_content, "Decrypted data should match original for TXT format.");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_round_trip_png_no_base() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_image_path = temp_dir.path().join("test_input_for_png.png"); // Changed .dat to .png
+        let encrypted_path_base = temp_dir.path().join("test_encrypted_steg");
+        let decrypted_path_base = temp_dir.path().join("test_decrypted_steg");
+
+        // Create a small dummy PNG file as input data to encrypt
+        let original_png_width = 10;
+        let original_png_height = 5;
+        create_dummy_png(&input_image_path, original_png_width, original_png_height)?;
+        let original_data = fs::read(&input_image_path)?;
+
+        let secret = Zeroizing::new("anotherStrongPassword!$5^".to_string());
+        let output_format_preference = "png";
+        let lsb_bits: u8 = 1; // Use 1 LSB to match decryption logic assumption
+
+        // Encrypt
+        let original_input_format = encrypt_image(
+            &input_image_path,
+            &encrypted_path_base, // encrypt_image will add .png
+            &secret,
+            output_format_preference,
+            None::<PathBuf>, // No base image
+            lsb_bits,
+        )?;
+        assert_eq!(original_input_format, "png");
+
+
+        let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
+        assert!(encrypted_file_with_ext.exists(), "Encrypted steganographic PNG file should exist.");
+
+        // Decrypt
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path_base, // decrypt_image will add .png
+            &secret,
+        )?;
+
+        let decrypted_file_with_ext = decrypted_path_base.with_extension("png");
+        assert!(decrypted_file_with_ext.exists(), "Decrypted PNG file should exist.");
+        let decrypted_data_content = fs::read(&decrypted_file_with_ext)?;
+
+        assert_eq!(original_data, decrypted_data_content, "Decrypted data should match original for steganographic PNG (no base).");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_round_trip_png_with_base() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_image_path = temp_dir.path().join("test_input_for_steg_base.dat");
+        let base_image_path = temp_dir.path().join("base_carrier.png");
+        let encrypted_path_base = temp_dir.path().join("test_encrypted_steg_w_base");
+        let decrypted_path_base = temp_dir.path().join("test_decrypted_steg_w_base");
+
+        // Create content to encrypt (can be anything, e.g., text data)
+        let data_to_encrypt = b"Short payload for steganography with base image.";
+        fs::write(&input_image_path, data_to_encrypt)?;
+        
+        // Create a small base PNG image
+        create_dummy_png(&base_image_path, 20, 20)?; // Ensure it's large enough
+
+        let secret = Zeroizing::new("passwordForStegWithBase123$%^".to_string());
+        let output_format_preference = "png";
+        let lsb_bits: u8 = 1; // Use 1 LSB to match decryption logic assumption
+
+        // Encrypt
+        encrypt_image(
+            &input_image_path,
+            &encrypted_path_base, // .png will be added
+            &secret,
+            output_format_preference,
+            Some(&base_image_path), // Provide base image
+            lsb_bits,
+        )?;
+
+        let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
+        assert!(encrypted_file_with_ext.exists(), "Encrypted steganographic PNG file (with base) should exist.");
+
+        // Decrypt
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path_base, // Extension will be determined by detect_file_format
+            &secret,
+        )?;
+        
+        // Since the original data was not a PNG, detect_file_format will return None,
+        // so the decrypted file will be saved with the base name.
+        assert!(decrypted_path_base.exists(), "Decrypted file (with base) should exist.");
+        let decrypted_data_content = fs::read(&decrypted_path_base)?;
+
+        assert_eq!(data_to_encrypt.to_vec(), decrypted_data_content, "Decrypted data should match original for steganographic PNG (with base).");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_password_complexity_valid() {
+        assert!(validate_password_complexity("ValidPass123!@#$")); // Changed: Added '$' to make length 16
+        assert!(validate_password_complexity("Another_Good-Password456$"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_too_short() {
+        assert!(!validate_password_complexity("Short1!"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_uppercase() {
+        assert!(!validate_password_complexity("nouppercase123!@#"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_lowercase() {
+        assert!(!validate_password_complexity("NOLOWERCASE123!@#"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_digit() {
+        assert!(!validate_password_complexity("NoDigitPassword!@#"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_symbol() {
+        assert!(!validate_password_complexity("NoSymbolPassword123"));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_all_criteria_missing_sequentially() {
+        // Too short
+        assert!(!validate_password_complexity("Pass1!"));
+        // Missing uppercase
+        assert!(!validate_password_complexity("validpass123!@#"));
+        // Missing lowercase
+        assert!(!validate_password_complexity("VALIDPASS123!@#"));
+        // Missing digit
+        assert!(!validate_password_complexity("ValidPassword!@#"));
+        // Missing symbol
+        assert!(!validate_password_complexity("ValidPassword123"));
+    }
+}
