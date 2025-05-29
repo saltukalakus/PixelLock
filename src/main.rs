@@ -1,15 +1,25 @@
-use std::{fs, io::{self, Write}, path::{Path}}; // Removed PathBuf
+use std::{fs, io::{self, Write}, path::{Path}};
 use clap::{Arg, ArgAction, Command, ArgMatches};
 use rpassword::read_password;
 use zeroize::Zeroizing;
 
 mod utils;
 
+/// Validates the complexity of a given password.
+///
+/// # Arguments
+/// * `password` - The password string to validate.
+///
+/// # Returns
+/// * `true` if the password meets all complexity requirements.
+/// * `false` otherwise, and prints an error message.
 fn validate_password_complexity(password: &str) -> bool {
+    // Check minimum length.
     if password.len() < 16 {
         eprintln!("Error: Password must be at least 16 characters long.");
         return false;
     }
+    // Check for character types.
     let has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
     let has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
     let has_digit = password.chars().any(|c| c.is_ascii_digit());
@@ -34,13 +44,24 @@ fn validate_password_complexity(password: &str) -> bool {
     true
 }
 
+/// Prompts the user for a secret (password) and validates it if in encryption mode.
+/// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.
+///
+/// # Arguments
+/// * `is_encryption_mode` - `true` if called during encryption (requires confirmation and complexity check),
+///                          `false` if called during decryption (prompts once).
+///
+/// # Returns
+/// * A `Zeroizing<String>` containing the user's secret.
 fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
     if is_encryption_mode {
+        // Encryption mode: prompt for new secret, validate complexity, and confirm.
         loop {
             print!("Enter your new secret: ");
             io::stdout().flush().unwrap();
             let secret1_plain = read_password().expect("Failed to read secret");
 
+            // Validate complexity for new secrets.
             if !validate_password_complexity(&secret1_plain) {
                 println!("Please try again, ensuring the password meets all complexity requirements.");
                 continue;
@@ -64,6 +85,10 @@ fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
     }
 }
 
+/// Validates if a given file path exists. Exits the program if it doesn't.
+///
+/// # Arguments
+/// * `file_path` - The path string of the file to check.
 fn validate_file_exists(file_path: &str) {
     if !Path::new(file_path).exists() {
         eprintln!("Error: Input file '{}' not found.", file_path);
@@ -71,12 +96,18 @@ fn validate_file_exists(file_path: &str) {
     }
 }
 
+/// Builds the command-line interface configuration using `clap`.
+/// Defines all available arguments, options, and help messages.
+///
+/// # Returns
+/// * `ArgMatches` containing the parsed command-line arguments.
 fn build_cli_app() -> ArgMatches {
     Command::new("PixelLock")
         .version("1.0")
         .author("Saltuk Alakus")
         .about("\nPixelLock is a command-line tool to secure your pictures with military-grade encryption. 
                 \nIt helps enhance privacy and provide an additional layer of security while storing images.")
+        // Mode arguments: encrypt or decrypt.
         .arg(
             Arg::new("decrypt")
                 .short('d')
@@ -91,6 +122,7 @@ fn build_cli_app() -> ArgMatches {
                 .action(ArgAction::SetTrue)
                 .help("Encrypt the input file(s)"),
         )
+        // Input/Output path arguments.
         .arg(
             Arg::new("input")
                 .short('i')
@@ -107,6 +139,7 @@ fn build_cli_app() -> ArgMatches {
                 .value_parser(clap::value_parser!(String))
                 .help("Path to the output file or folder"),
         )
+        // Encryption-specific arguments.
         .arg(
             Arg::new("format")
                 .short('f')
@@ -135,10 +168,21 @@ fn build_cli_app() -> ArgMatches {
         .get_matches()
 }
 
+/// Processes all supported files in an input directory for encryption or decryption.
+///
+/// # Arguments
+/// * `input_dir_str` - Path to the input directory.
+/// * `output_dir_str` - Path to the output directory.
+/// * `is_encrypt` - `true` for encryption mode, `false` for decryption mode.
+/// * `secret` - The user's secret for the operation.
+/// * `output_format_preference` - Preferred output format for encryption ("txt" or "png").
+/// * `base_image_path_str_opt` - Optional path to a base image for steganography.
+/// * `lsb_bits_for_encryption` - LSB bits to use per channel for steganographic encryption.
 fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>, output_format_preference: &str, base_image_path_str_opt: Option<&String>, lsb_bits_for_encryption: u8) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
 
+    // Ensure output directory exists or create it.
     if !output_dir.exists() {
         if let Err(e) = fs::create_dir_all(output_dir) {
             eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
@@ -150,6 +194,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
         std::process::exit(1);
     }
 
+    // Read directory entries.
     match fs::read_dir(input_dir) {
         Ok(entries) => {
             let mut files_processed_successfully = 0;
@@ -162,26 +207,32 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                     Ok(entry) => {
                         let current_input_file_path = entry.path();
                         if current_input_file_path.is_file() {
+                            // Determine if the file should be processed based on its extension and current mode.
                             let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
                             let lower_extension = extension.to_lowercase();
 
                             let should_process = if is_encrypt {
+                                // Supported extensions for encryption input.
                                 let supported_encryption_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
                                 supported_encryption_extensions.contains(&lower_extension.as_str())
                             } else {
+                                // Supported extensions for decryption input.
                                 lower_extension == "txt" || lower_extension == "png"
                             };
 
                             if !should_process {
                                 files_skipped_extension += 1;
-                                continue;
+                                continue; // Skip unsupported files.
                             }
 
+                            // Construct the output file path.
                             let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
 
                             let current_output_file_path_base = if is_encrypt {
+                                // For encryption, output name is same as input, extension set by format.
                                 output_dir.join(file_name_os_str)
                             } else {
+                                // For decryption, output name is input stem, extension auto-detected.
                                 let stem = current_input_file_path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("decrypted_file"));
                                 output_dir.join(stem)
                             };
@@ -189,6 +240,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             print!("Processing {:?} -> {:?} (extension will be set by operation) ... ", current_input_file_path, current_output_file_path_base);
                             io::stdout().flush().unwrap();
 
+                            // Perform encryption or decryption.
                             let operation_result = if is_encrypt {
                                 utils::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption).map(|_| ())
                             } else {
@@ -226,9 +278,13 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
     }
 }
 
+/// Main function: parses CLI arguments, validates them, prompts for secret,
+/// and dispatches to either single file processing or folder processing mode.
 fn main() {
+    // Parse command-line arguments.
     let matches = build_cli_app();
 
+    // Extract operation mode and format preferences.
     let is_decrypt = matches.get_flag("decrypt");
     let is_encrypt = matches.get_flag("encrypt");
     let output_format_preference = matches.get_one::<String>("format").unwrap().as_str();
@@ -237,7 +293,9 @@ fn main() {
     let ratio_from_cli = *matches.get_one::<u8>("ratio").unwrap(); 
     let user_explicitly_set_ratio = matches.value_source("ratio") == Some(clap::parser::ValueSource::CommandLine);
 
+    // Validate argument combinations.
     if is_decrypt {
+        // Decryption mode should not have encryption-specific options.
         if base_image_path_str_opt.is_some() {
             eprintln!("Error: --base (-b) option cannot be used with decryption mode (-d).");
             std::process::exit(1);
@@ -247,6 +305,7 @@ fn main() {
             std::process::exit(1);
         }
     } else if output_format_preference == "txt" {
+        // "txt" format does not support steganography options.
         if base_image_path_str_opt.is_some() {
             eprintln!("Error: --base (-b) option can only be used with --format png.");
             std::process::exit(1);
@@ -256,33 +315,40 @@ fn main() {
             std::process::exit(1);
         }
     } else if user_explicitly_set_ratio && base_image_path_str_opt.is_none() {
+        // Ratio requires a base image.
         eprintln!("Error: --ratio (-r) option requires a base image to be specified with --base (-b) when using --format png.");
         std::process::exit(1);
     }
 
+    // Determine LSB bits for encryption based on settings.
     let lsb_bits_for_encryption = if output_format_preference == "png" {
         if base_image_path_str_opt.is_some() {
-            ratio_from_cli
+            ratio_from_cli // Use user-specified ratio if base image is provided.
         } else {
-            1
+            1 // Default to 1 LSB if no base image (new image generated).
         }
     } else {
-        1
+        1 // Default for non-PNG or non-steganography scenarios (though not directly used for .txt).
     };
 
+    // Ensure either encrypt or decrypt mode is chosen, but not both.
     if is_decrypt == is_encrypt {
         eprintln!("Error: You must specify either --encrypt (-e) or --decrypt (-d).");
         std::process::exit(1);
     }
 
+    // Get input and output paths.
     let input_arg_str = matches.get_one::<String>("input").unwrap();
     let output_arg_str = matches.get_one::<String>("output").unwrap();
 
     let input_path = Path::new(input_arg_str);
 
+    // Prompt for and validate the secret.
     let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
 
+    // Dispatch to folder or single file processing.
     if input_path.is_dir() {
+        // Input is a directory, process in folder mode.
         let output_path = Path::new(output_arg_str);
         if output_path.exists() && !output_path.is_dir() {
             eprintln!("Error: Input is a folder, so output '{}' must also be a folder or not exist (it will be created). It currently exists as a file.", output_arg_str);
@@ -290,10 +356,11 @@ fn main() {
         }
         process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret, output_format_preference, base_image_path_str_opt, lsb_bits_for_encryption);
     } else {
-        validate_file_exists(input_arg_str);
+        // Input is a single file.
+        validate_file_exists(input_arg_str); // Ensure input file exists.
         if is_encrypt {
             match utils::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption) {
-                Ok(_original_format) => {}
+                Ok(_original_format) => {} // Success message printed by encrypt_image
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);
                 }
