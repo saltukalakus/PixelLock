@@ -10,6 +10,93 @@ use base64::{Engine as _, engine::general_purpose};
 use crate::error_types::CryptoImageError;
 use crate::utils::{SALT_STRING_LEN, NONCE_STRING_LEN, derive_encryption_key_with_salt};
 
+/// Prepares or creates a carrier RgbImage for steganography.
+///
+/// If a base_image_path is provided, it attempts to use that image. If the base image is too small,
+/// it's tiled to fit the required number of pixels.
+/// If no base_image_path is provided, a new RgbImage is generated with random pixels,
+/// sized to accommodate the required number of pixels.
+///
+/// # Arguments
+/// * `base_image_path_opt` - Optional path to a base PNG image.
+/// * `pixels_needed` - The total number of pixels required for the carrier image.
+///
+/// # Returns
+/// * `Ok(RgbImage)` containing the prepared carrier image.
+/// * `Err(CryptoImageError)` on failure (e.g., base image not found, not a PNG, or I/O errors).
+fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
+    base_image_path_opt: Option<P>,
+    pixels_needed: usize,
+) -> Result<RgbImage, CryptoImageError> {
+    if let Some(base_path_ref) = base_image_path_opt {
+        let base_path = base_path_ref.as_ref();
+        if !base_path.exists() {
+            return Err(CryptoImageError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Base image not found: {:?}", base_path),
+            )));
+        }
+        if base_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase() != "png" {
+            return Err(CryptoImageError::InvalidParameter("Base image must be a PNG file.".to_string()));
+        }
+
+        let base_dyn_image = image::open(base_path)?;
+        let base_rgb_image = base_dyn_image.to_rgb8();
+        let base_width = base_rgb_image.width();
+        let base_height = base_rgb_image.height();
+        let base_pixels_capacity = (base_width * base_height) as usize;
+
+        if base_pixels_capacity >= pixels_needed {
+            Ok(base_rgb_image)
+        } else {
+            let mut new_width = base_width;
+            let mut new_height = base_height;
+            // Ensure dimensions are not zero before starting tiling calculation
+            if new_width == 0 || new_height == 0 {
+                 // If base image was 0x0, calculate new dimensions as if generating a new image
+                new_width = (pixels_needed as f64).sqrt().ceil() as u32;
+                new_height = (pixels_needed as u32).div_ceil(new_width);
+                if new_width == 0 { new_width = 1; } // Ensure at least 1x1
+                if new_height == 0 { new_height = 1; }
+            } else {
+                // Tile existing base image
+                while ((new_width * new_height) as usize) < pixels_needed {
+                    new_width *= 2;
+                    new_height *= 2;
+                }
+            }
+            
+            let mut tiled_image = RgbImage::new(new_width, new_height);
+            if base_width > 0 && base_height > 0 { // Check again in case base was 0x0 and new_width/height were set
+                for y_tiled in 0..new_height {
+                    for x_tiled in 0..new_width {
+                        let orig_x = x_tiled % base_width;
+                        let orig_y = y_tiled % base_height;
+                        tiled_image.put_pixel(x_tiled, y_tiled, *base_rgb_image.get_pixel(orig_x, orig_y));
+                    }
+                }
+            } else { // Fill with random if base was 0x0 or couldn't be tiled
+                for pixel in tiled_image.pixels_mut() {
+                    *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
+                }
+            }
+            Ok(tiled_image)
+        }
+    } else {
+        // No base image provided, generate a new one.
+        let width = (pixels_needed as f64).sqrt().ceil() as u32;
+        let mut height = (pixels_needed as u32).div_ceil(width);
+        if width == 0 { return Err(CryptoImageError::InvalidParameter("Calculated width is zero for new image".into())); }
+        if height == 0 { height = 1; } // Ensure at least 1 pixel high.
+
+        let mut new_image = RgbImage::new(width, height);
+        for pixel_val in new_image.pixels_mut() {
+            *pixel_val = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
+        }
+        Ok(new_image)
+    }
+}
+
 /// Encrypts an image file using AES-256-GCM and optionally embeds it into a carrier PNG image
 /// using LSB steganography or saves it as a Base64 encoded text file.
 ///
@@ -93,69 +180,19 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         let pixels_needed_for_payload = total_payload_bits.div_ceil(bits_per_pixel_payload);
         let pixels_needed = pixels_needed_for_header + pixels_needed_for_payload;
 
-        let mut carrier_image: RgbImage;
-
-        if let Some(base_path_ref) = base_image_path_opt {
-            let base_path = base_path_ref.as_ref();
-            if (!base_path.exists()) {
-                return Err(CryptoImageError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Base image not found: {:?}", base_path),
-                )));
-            }
-            if base_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase() != "png" {
-                return Err(CryptoImageError::InvalidParameter("Base image must be a PNG file.".to_string()));
-            }
-
-            let base_dyn_image = image::open(base_path)?;
-            let base_rgb_image = base_dyn_image.to_rgb8();
-            let base_width = base_rgb_image.width();
-            let base_height = base_rgb_image.height();
-            let base_pixels_capacity = (base_width * base_height) as usize;
-
-            if base_pixels_capacity >= pixels_needed {
-                carrier_image = base_rgb_image;
-            } else {
-                let mut new_width = base_width;
-                let mut new_height = base_height;
-                while ((new_width * new_height) as usize) < pixels_needed {
-                    new_width *= 2;
-                    new_height *= 2; 
-                }
-                if new_width == 0 { new_width = (pixels_needed as f64).sqrt().ceil() as u32; }
-                if new_height == 0 { new_height = (pixels_needed as u32).div_ceil(new_width); }
-                if new_width == 0 { new_width = 1; }
-                if new_height == 0 { new_height = 1; }
-
-                let mut tiled_image = RgbImage::new(new_width, new_height);
-                if base_width > 0 && base_height > 0 {
-                    for y_tiled in 0..new_height {
-                        for x_tiled in 0..new_width {
-                            let orig_x = x_tiled % base_width;
-                            let orig_y = y_tiled % base_height;
-                            tiled_image.put_pixel(x_tiled, y_tiled, *base_rgb_image.get_pixel(orig_x, orig_y));
-                        }
-                    }
-                } else {
-                    for pixel in tiled_image.pixels_mut() {
-                        *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
-                    }
-                }
-                carrier_image = tiled_image;
-            }
-        } else {
-            let width = (pixels_needed as f64).sqrt().ceil() as u32;
-            let mut height = (pixels_needed as u32).div_ceil(width);
-            if width == 0 { return Err(CryptoImageError::InvalidParameter("Calculated width is zero for new image".into()));}
-            if height == 0 { height = 1; }
-
-            carrier_image = RgbImage::new(width, height);
-            for pixel_val in carrier_image.pixels_mut() {
-                *pixel_val = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
-            }
-        }
+        // Prepare or create the carrier image using the helper function.
+        let mut carrier_image = prepare_carrier_image(base_image_path_opt, pixels_needed)?;
         
         let (img_width, img_height) = carrier_image.dimensions();
+        // Ensure the prepared carrier image is actually large enough.
+        // This is a safeguard, as prepare_carrier_image should handle sizing.
+        if (img_width as usize * img_height as usize) < pixels_needed {
+            return Err(CryptoImageError::Steganography(
+                format!("Prepared carrier image is too small. Needed {} pixels, got {}x{} ({} pixels).", 
+                        pixels_needed, img_width, img_height, img_width as usize * img_height as usize)
+            ));
+        }
+
         let mut bit_idx_overall = 0;
         let mut current_data_source_byte_idx = 0;
         let mut current_data_source_bit_idx = 0;
