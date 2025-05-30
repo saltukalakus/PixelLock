@@ -1,10 +1,6 @@
-![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
+### <img src="./PixelLock.jpeg" alt="Logo" width="200"> 
 
-<img src="./PixelLock.jpeg" alt="Logo" width="100">
-
-PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images.
-
-Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
+PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images. Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
 
 ![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
 
@@ -56,7 +52,7 @@ For a full list of available options, try the help command:
 
 ### 💥💥💥 Security Challenge 💥💥💥
 
-This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can decrypt at least one of the images, you win ✨✨✨ **500 GBP** ✨✨✨
+This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can decrypt at least one of the images, you win 💰💰💰 **500 USD** 💰💰💰
 
 ### Disclaimer 
 
