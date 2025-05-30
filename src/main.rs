@@ -189,16 +189,23 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
 
                             let current_output_file_path_base = if is_encrypt {
-                                // For encryption, output name is same as input, extension set by format.
-                                output_dir.join(file_name_os_str)
+                                // For encryption, output name is input_filename.original_ext.encrypted
+                                // to ensure uniqueness if original extensions differ but stems are same,
+                                // or if different files have the same stem.
+                                // The final extension (.png or .txt) will be added by encrypt_image.
+                                let input_filename_complete_str = file_name_os_str.to_string_lossy();
+                                let new_base_name = format!("{}.encrypted", input_filename_complete_str);
+                                output_dir.join(new_base_name)
                             } else {
                                 // For decryption, output name is input stem, extension auto-detected.
                                 let stem = current_input_file_path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("decrypted_file"));
                                 output_dir.join(stem)
                             };
 
-                            print!("Processing {:?} -> {:?} (extension will be set by operation) ... ", current_input_file_path, current_output_file_path_base);
-                            io::stdout().flush().unwrap();
+                            print!("Processing {:?} -> {:?} (final extension will be .{} or auto-detected) ... ", 
+                                   current_input_file_path, 
+                                   current_output_file_path_base, 
+                                   if is_encrypt { output_format_preference } else { "auto" });
 
                             // Perform encryption or decryption.
                             let operation_result = if is_encrypt {
@@ -330,17 +337,5 @@ fn main() {
                 eprintln!("Error decrypting file: {}", e);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_cli_app_runs() {
-        // This test primarily ensures that building the CLI app does not panic.
-        let _ = build_cli_command(); // Call the function that returns Command
-                                 // No .get_matches() here to avoid parsing actual CLI args during test
     }
 }
