@@ -1,5 +1,5 @@
-use argon2::{Argon2, PasswordHasher}; 
-use argon2::password_hash::{SaltString}; 
+use argon2::{Argon2, PasswordHasher, Algorithm, Version}; 
+use argon2::password_hash::{SaltString, Error as PasswordHashError_}; // Alias to avoid conflict if used elsewhere
 
 use crate::error_types::CryptoImageError; 
 
@@ -42,9 +42,22 @@ pub fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
 ///
 /// # Returns
 /// * A 32-byte array representing the derived key.
-pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> Result<[u8; 32], CryptoImageError> { // Changed return type
-    // Use Argon2id (default for Argon2 crate).
-    let argon2 = Argon2::default();
+pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> Result<[u8; 32], CryptoImageError> {
+    // Configure Argon2 parameters
+    let m_cost = 65536; // 64 MiB
+    let t_cost = 10;  // 10 iterations
+    let p_cost = 4;   // 4 lanes (parallelism)
+
+    // argon2::Params::new returns Result<Params, password_hash::errors::InvalidParams>
+    // We use the From<password_hash::errors::InvalidParams> for argon2::Error trait
+    let params = argon2::Params::new(m_cost, t_cost, p_cost, None)
+        .map_err(|e| CryptoImageError::Argon2(argon2::Error::from(e)))?;
+
+    let argon2 = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        params,
+    );
 
     // Hash the password with the salt.
     let password_hash = argon2

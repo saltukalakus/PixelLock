@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-argon2 = "0.5.3"
+argon2 = { version = "0.5.3", features = ["password-hash"] }
 aes-gcm = "0.10.3" 
 image = "0.25.6"
 rand = "0.8.5"
