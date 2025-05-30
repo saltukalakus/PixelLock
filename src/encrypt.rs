@@ -114,24 +114,13 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
     }
 }
 
-/// Encrypts an image file using AES-256-GCM and optionally embeds it into a carrier PNG image
-/// using LSB steganography or saves it as a Base64 encoded text file.
-///
-/// # Arguments
-/// * `input_image_path` - Path to the image to be encrypted.
-/// * `output_encrypted_path_param` - Base path for the output encrypted file. Extension will be set based on `output_format_preference`.
-/// * `secret` - The user-provided secret (password) for encryption, wrapped in Zeroizing for security.
-/// * `output_format_preference` - "txt" for Base64 output, "png" for steganographic PNG output.
-/// * `base_image_path_opt` - Optional path to a base PNG image to use as a carrier for steganography.
-/// * `lsb_bits_per_channel` - Number of LSBs (1-4) to use per color channel for steganography if `output_format_preference` is "png".
-///
-/// # Returns
-/// * `Ok(String)` containing the original format of the input image on success.
-/// * `Err(CryptoImageError)` on failure.
-pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
+/// Core encryption logic using a pre-derived key and salt.
+/// This function is intended for use when the key and salt are managed externally (e.g., folder mode).
+pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P1,
     output_encrypted_path_param: P2,
-    secret: &Zeroizing<String>,
+    derived_key: &[u8; 32], // Accepts pre-derived key
+    salt_for_payload: &SaltString, // Accepts salt used for derivation, to be stored
     output_format_preference: &str,
     base_image_path_opt: Option<P3>,
     lsb_bits_per_channel: u8, 
@@ -143,25 +132,18 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         .unwrap_or("png")
         .to_lowercase();
 
-    // Read the entire input image file into bytes.
     let img_bytes = fs::read(&input_image_path)?;
 
-    // Generate a new random salt for Argon2.
-    let salt: SaltString = SaltString::generate(&mut OsRng);
-    // Derive the encryption key from the secret and salt using Argon2.
-    let derived_key = derive_encryption_key_with_salt(secret, &salt)?;
+    // Key derivation is skipped here; uses provided derived_key and salt_for_payload
 
-    // Initialize AES-256-GCM cipher with the derived key.
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
-    // Generate a random nonce for AES-GCM.
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(derived_key));
     let nonce_bytes: [u8; NONCE_STRING_LEN] = OsRng.gen();
     let nonce = Nonce::from_slice(&nonce_bytes);
-    // Encrypt the image data.
     let encrypted_data_core = cipher.encrypt(nonce, img_bytes.as_ref())
         .map_err(|_| CryptoImageError::Encryption("AEAD encryption failed".to_string()))?;
 
-    let salt_bytes_to_store = salt.as_str().as_bytes();
-    assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Generated salt string length does not match expected SALT_STRING_LEN.");
+    let salt_bytes_to_store = salt_for_payload.as_str().as_bytes(); // Use the provided salt
+    assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Provided salt string length does not match expected SALT_STRING_LEN.");
 
     let mut raw_output_payload = Vec::new();
     raw_output_payload.extend_from_slice(salt_bytes_to_store);
@@ -313,6 +295,33 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     }
 
     Ok(original_format_str)
+}
+
+/// Encrypts an image file using AES-256-GCM. Derives key and salt internally.
+/// This is the standard entry point for single-file encryption.
+pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
+    input_image_path: P1,
+    output_encrypted_path_param: P2,
+    secret: &Zeroizing<String>, // Takes the raw secret
+    output_format_preference: &str,
+    base_image_path_opt: Option<P3>,
+    lsb_bits_per_channel: u8, 
+) -> Result<String, CryptoImageError> {
+    // Generate a new random salt for Argon2.
+    let new_salt = SaltString::generate(&mut OsRng);
+    // Derive the encryption key from the secret and salt using Argon2.
+    let derived_key = derive_encryption_key_with_salt(secret, &new_salt)?;
+
+    // Call the core encryption logic with the derived key and new salt.
+    encrypt_image_core(
+        input_image_path,
+        output_encrypted_path_param,
+        &derived_key,
+        &new_salt,
+        output_format_preference,
+        base_image_path_opt,
+        lsb_bits_per_channel,
+    )
 }
 
 

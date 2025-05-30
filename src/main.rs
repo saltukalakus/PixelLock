@@ -2,6 +2,8 @@ use std::{fs, io::{self, Write}, path::{Path}};
 use clap::{Arg, ArgAction, Command}; 
 use rpassword::read_password;
 use zeroize::Zeroizing;
+use argon2::password_hash::SaltString; // Added for generating salt in main
+use rand::rngs::OsRng; // Added for SaltString::generate
 
 mod utils;
 mod error_types; 
@@ -131,7 +133,7 @@ fn build_cli_command() -> Command { // Renamed and changed return type
                 .value_parser(clap::value_parser!(u8).range(1..=4)) // Expects 1, 2, 3, or 4
                 .default_value("1")
                 .required(false)
-                .help("LSB ratio (1-4) for steganography when using a base image (-b) with PNG format. Higher means more data per pixel but more visible change. Not used if a base image is not provided (defaults to full 8-bit embedding for generated images).")
+                .help("LSB ratio (1-4) for steganography when using a base image (-b). Higher means more data per pixel.")
         )
 }
 
@@ -141,12 +143,32 @@ fn build_cli_command() -> Command { // Renamed and changed return type
 /// * `input_dir_str` - Path to the input directory.
 /// * `output_dir_str` - Path to the output directory.
 /// * `is_encrypt` - `true` for encryption mode, `false` for decryption mode.
-/// * `secret` - The user's secret for the operation.
+/// * `secret_or_key_salt` - Either the user's secret (for decryption) or pre-derived key and salt (for encryption).
 /// * `output_format_preference` - Preferred output format for encryption ("txt" or "png").
 /// * `base_image_path_str_opt` - Optional path to a base image for steganography.
 /// * `lsb_bits_for_encryption` - LSB bits to use per channel for steganographic encryption.
-fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bool, secret: &Zeroizing<String>, output_format_preference: &str, base_image_path_str_opt: Option<&String>, lsb_bits_for_encryption: u8) {
+fn process_folder_mode(
+    input_dir_str: &str, 
+    output_dir_str: &str, 
+    is_encrypt: bool, 
+    // For encryption: derived_key and salt_for_payload. For decryption: secret.
+    // We'll pass them separately for type safety in the call.
+    // Let's adjust the parameters based on `is_encrypt` before calling, or use an enum.
+    // For simplicity, we'll adjust parameters in main and pass what's needed.
+    // So, for encryption, this will receive derived_key and salt_for_payload.
+    // For decryption, it will receive the secret.
+    // This means the function signature needs to be more flexible or we need two versions.
+    // Let's pass what's needed directly.
+    secret_for_decryption: Option<&Zeroizing<String>>, // Only for decryption
+    derived_key_for_encryption: Option<&[u8; 32]>, // Only for encryption
+    salt_for_encryption_payload: Option<&SaltString>, // Only for encryption
+    output_format_preference: &str, 
+    base_image_path_str_opt: Option<&String>, 
+    lsb_bits_for_encryption: u8
+) {
     let input_dir = Path::new(input_dir_str);
+
+    // Ensure output directory exists or create it.
     let output_dir = Path::new(output_dir_str);
 
     // Ensure output directory exists or create it.
@@ -216,9 +238,21 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
 
                             // Perform encryption or decryption.
                             let operation_result = if is_encrypt {
-                                encrypt::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption).map(|_| ())
+                                // Ensure derived_key and salt_for_payload are available for encryption
+                                let key = derived_key_for_encryption.expect("Derived key missing for folder encryption");
+                                let salt = salt_for_encryption_payload.expect("Salt for payload missing for folder encryption");
+                                encrypt::encrypt_image_core( // Call encrypt_image_core
+                                    &current_input_file_path, 
+                                    &current_output_file_path_base, 
+                                    key, 
+                                    salt, 
+                                    output_format_preference, 
+                                    base_image_path_str_opt.map(Path::new), 
+                                    lsb_bits_for_encryption
+                                ).map(|_| ())
                             } else {
-                                decrypt::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret) // Updated to decrypt::
+                                let secret = secret_for_decryption.expect("Secret missing for folder decryption");
+                                decrypt::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret)
                             };
 
                             match operation_result {
@@ -334,7 +368,41 @@ fn main() {
             eprintln!("Error: Input is a folder, so output '{}' must also be a folder or not exist (it will be created). It currently exists as a file.", output_arg_str);
             std::process::exit(1);
         }
-        process_folder_mode(input_arg_str, output_arg_str, is_encrypt, &encryption_secret, output_format_preference, base_image_path_str_opt, lsb_bits_for_encryption);
+
+        if is_encrypt {
+            let salt_for_folder = SaltString::generate(&mut OsRng);
+            match utils::derive_encryption_key_with_salt(&encryption_secret, &salt_for_folder) {
+                Ok(derived_key) => {
+                    process_folder_mode(
+                        input_arg_str, 
+                        output_arg_str, 
+                        is_encrypt, 
+                        None, // secret_for_decryption
+                        Some(&derived_key), // derived_key_for_encryption
+                        Some(&salt_for_folder), // salt_for_encryption_payload
+                        output_format_preference, 
+                        base_image_path_str_opt, 
+                        lsb_bits_for_encryption
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error deriving key for folder encryption: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else { // Decryption mode for folder
+            process_folder_mode(
+                input_arg_str, 
+                output_arg_str, 
+                is_encrypt, 
+                Some(&encryption_secret), // secret_for_decryption
+                None, // derived_key_for_encryption
+                None, // salt_for_encryption_payload
+                output_format_preference, // Not used in decryption path of process_folder_mode
+                base_image_path_str_opt,  // Not used
+                lsb_bits_for_encryption   // Not used
+            );
+        }
     } else {
         // Input is a single file.
         validate_file_exists(input_arg_str); // Ensure input file exists.

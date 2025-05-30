@@ -1,5 +1,7 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.jpeg)
 
+<img src="./PixelLock.jpeg" alt="Logo" width="100">
+
 PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images.
 
 Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
@@ -35,19 +37,26 @@ Decrypting a steganographic PNG image to reveal the secret image:
 ./target/release/PixelLock -d -i ./stego_image.png -o ./secret_image
 # Output extension will be based on detected original format, e.g., ./secret_image.jpeg
 ```
+
+Encrypting all images in a folder, embedding them into a provided base PNG:
+```bash
+./target/release/PixelLock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
+```
+
+Decrypting all steganographic PNG images in a folder to an output folder:
+```bash
+./target/release/PixelLock -d -i ./stego_folder -o ./image-folder
+```
+
 For a full list of available options, try the help command:
 
 ```bash
 ./target/release/PixelLock --help  
 ```
 
-### Security Challenge
+### 💥💥💥 Security Challenge 💥💥💥
 
-This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). 
-
-If you can generate one of the original images, you win **500 GBP**! 
-
-You may find the the rules and other details [here](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c#file-1description-md) in the same Gist.
+This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can decrypt at least one of the images, you win ✨✨✨ **500 GBP** ✨✨✨
 
 ### Disclaimer 
 
