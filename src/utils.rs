@@ -1,38 +1,10 @@
 use argon2::{Argon2, PasswordHasher, Algorithm, Version}; 
-use argon2::password_hash::{SaltString, Error as PasswordHashError_}; // Alias to avoid conflict if used elsewhere
+use argon2::password_hash::{SaltString};
 
 use crate::error_types::CryptoImageError; 
 
 pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; 
-
-/// Detects common image file formats based on magic bytes.
-///
-/// # Arguments
-/// * `decrypted_data` - A byte slice of the data to check.
-///
-/// # Returns
-/// * `Some(&'static str)` containing the file extension (e.g., "jpeg", "png") if a known format is detected.
-/// * `None` if the format is not recognized.
-pub fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
-    if decrypted_data.starts_with(&[0xFF, 0xD8, 0xFF]) { // JPEG
-        Some("jpeg")
-    } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) { // PNG
-        Some("png")
-    } else if decrypted_data.starts_with(b"BM") { // BMP
-        Some("bmp")
-    } else if decrypted_data.starts_with(b"GIF87a") || decrypted_data.starts_with(b"GIF89a") { // GIF
-        Some("gif")
-    } else if decrypted_data.starts_with(&[0x49, 0x49, 0x2A, 0x00]) || decrypted_data.starts_with(&[0x4D, 0x4D, 0x00, 0x2A]) { // TIFF
-        Some("tiff")
-    } else if decrypted_data.len() >= 12 && 
-              decrypted_data.starts_with(b"RIFF") && 
-              &decrypted_data[8..12] == b"WEBP" { // WEBP
-        Some("webp")
-    } else {
-        None
-    }
-}
 
 /// Derives a 32-byte encryption key from a secret (password) and a salt using Argon2id.
 ///
@@ -123,23 +95,6 @@ mod tests {
 
         assert_eq!(key1.len(), 32);
         assert_eq!(key1, key2, "Key derivation should be deterministic for the same secret and salt.");
-    }
-
-    #[test]
-    fn test_detect_file_format_known() {
-        assert_eq!(detect_file_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("jpeg"));
-        assert_eq!(detect_file_format(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]), Some("png"));
-        assert_eq!(detect_file_format(b"BMxxxx"), Some("bmp")); // "xxxx" are placeholders for size etc.
-        assert_eq!(detect_file_format(b"GIF89a"), Some("gif"));
-        assert_eq!(detect_file_format(&[0x49, 0x49, 0x2A, 0x00]), Some("tiff")); // TIFF Little Endian
-        assert_eq!(detect_file_format(&[0x4D, 0x4D, 0x00, 0x2A]), Some("tiff")); // TIFF Big Endian
-        assert_eq!(detect_file_format(b"RIFFxxxxWEBPVP8 "), Some("webp")); // "xxxx" and "VP8 " are part of WEBP
-    }
-
-    #[test]
-    fn test_detect_file_format_unknown() {
-        assert_eq!(detect_file_format(b"this is not an image"), None);
-        assert_eq!(detect_file_format(&[0x01, 0x02, 0x03, 0x04]), None);
     }
 
     #[test]
