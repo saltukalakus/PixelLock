@@ -3,9 +3,6 @@ use argon2::password_hash::{SaltString};
 
 use crate::error_types::CryptoImageError; 
 
-pub const SALT_STRING_LEN: usize = 22;
-pub const NONCE_STRING_LEN: usize = 12; 
-
 /// Derives a 32-byte encryption key from a secret (password) and a salt using Argon2id.
 ///
 /// # Arguments

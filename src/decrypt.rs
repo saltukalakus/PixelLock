@@ -7,7 +7,8 @@ use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
-use crate::utils::{SALT_STRING_LEN, NONCE_STRING_LEN, derive_encryption_key_with_salt};
+use crate::utils::{derive_encryption_key_with_salt}; 
+use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN};
 
 /// Detects common image file formats based on magic bytes.
 ///
