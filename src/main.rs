@@ -4,6 +4,7 @@ use rpassword::read_password;
 use zeroize::Zeroizing;
 
 mod utils;
+mod error_types; // Added module declaration
 
 /// Prompts the user for a secret (password) and validates it if in encryption mode.
 /// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.

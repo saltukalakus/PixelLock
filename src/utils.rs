@@ -1,114 +1,15 @@
 use aes_gcm::{Aes256Gcm, Key, Nonce};
-use aes_gcm::aead::{Aead, KeyInit, Error as AeadError};
-use image::{ImageError as ImgError, RgbImage, GenericImageView}; // Removed ImageFormat
+use aes_gcm::aead::{Aead, KeyInit}; 
+use image::{RgbImage, GenericImageView}; // Removed ImageError as ImgError
 use rand::{rngs::OsRng, Rng, random};
-use std::{array::TryFromSliceError, fmt, fs, path::{Path, PathBuf}}; // Added TryFromSliceError
-use argon2::{Argon2, PasswordHasher, Error as Argon2Error};
-use argon2::password_hash::{SaltString, Error as PasswordHashError};
+use std::{fs, path::{Path, PathBuf}}; 
+use argon2::{Argon2, PasswordHasher}; 
+use argon2::password_hash::{SaltString}; 
 use zeroize::Zeroizing;
-use base64::{Engine as _, engine::general_purpose, DecodeError as Base64DecodeError};
+use base64::{Engine as _, engine::general_purpose}; 
 
-// Custom Error Type
-#[derive(Debug)]
-pub enum CryptoImageError {
-    Io(std::io::Error),
-    Image(ImgError),
-    Encryption(String),
-    Decryption(String),
-    Aead(AeadError),
-    Argon2(Argon2Error),
-    PasswordHash(PasswordHashError),
-    Base64(Base64DecodeError),
-    Steganography(String),
-    PasswordComplexity(String),
-    InvalidParameter(String),
-    Utf8Error(std::str::Utf8Error),
-    TryFromSlice(TryFromSliceError), // Added variant
-}
-
-impl fmt::Display for CryptoImageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CryptoImageError::Io(e) => write!(f, "IO error: {}", e),
-            CryptoImageError::Image(e) => write!(f, "Image processing error: {}", e),
-            CryptoImageError::Encryption(msg) => write!(f, "Encryption error: {}", msg),
-            CryptoImageError::Decryption(msg) => write!(f, "Decryption error: {}", msg),
-            CryptoImageError::Aead(_) => write!(f, "AEAD operation error"),
-            CryptoImageError::Argon2(e) => write!(f, "Argon2 error: {}", e),
-            CryptoImageError::PasswordHash(e) => write!(f, "Password hashing error: {}", e),
-            CryptoImageError::Base64(e) => write!(f, "Base64 decoding error: {}", e),
-            CryptoImageError::Steganography(msg) => write!(f, "Steganography error: {}", msg),
-            CryptoImageError::PasswordComplexity(msg) => write!(f, "Password complexity error: {}", msg),
-            CryptoImageError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
-            CryptoImageError::Utf8Error(e) => write!(f, "UTF-8 conversion error: {}", e),
-            CryptoImageError::TryFromSlice(e) => write!(f, "Slice to array conversion error: {}", e), // Added display
-        }
-    }
-}
-
-impl std::error::Error for CryptoImageError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            CryptoImageError::Io(e) => Some(e),
-            CryptoImageError::Image(e) => Some(e),
-            CryptoImageError::Aead(_) => None, // aead::Error is (), does not implement Error
-            CryptoImageError::Argon2(_) => None, // argon2::Error source() returns None
-            CryptoImageError::PasswordHash(_) => None, // password_hash::Error source() returns None
-            CryptoImageError::Base64(e) => Some(e),
-            CryptoImageError::Utf8Error(e) => Some(e),
-            CryptoImageError::TryFromSlice(e) => Some(e), 
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for CryptoImageError {
-    fn from(err: std::io::Error) -> Self {
-        CryptoImageError::Io(err)
-    }
-}
-
-impl From<ImgError> for CryptoImageError {
-    fn from(err: ImgError) -> Self {
-        CryptoImageError::Image(err)
-    }
-}
-
-impl From<AeadError> for CryptoImageError { // aes_gcm::Error is an alias for aead::Error which is ()
-    fn from(err: AeadError) -> Self {
-        CryptoImageError::Aead(err)
-    }
-}
-
-impl From<Argon2Error> for CryptoImageError {
-    fn from(err: Argon2Error) -> Self {
-        CryptoImageError::Argon2(err)
-    }
-}
-
-impl From<PasswordHashError> for CryptoImageError {
-    fn from(err: PasswordHashError) -> Self {
-        CryptoImageError::PasswordHash(err)
-    }
-}
-
-impl From<Base64DecodeError> for CryptoImageError {
-    fn from(err: Base64DecodeError) -> Self {
-        CryptoImageError::Base64(err)
-    }
-}
-
-impl From<std::str::Utf8Error> for CryptoImageError {
-    fn from(err: std::str::Utf8Error) -> Self {
-        CryptoImageError::Utf8Error(err)
-    }
-}
-
-impl From<TryFromSliceError> for CryptoImageError { // Added From impl
-    fn from(err: TryFromSliceError) -> Self {
-        CryptoImageError::TryFromSlice(err)
-    }
-}
+// Removed: mod error_types;
+use crate::error_types::CryptoImageError; // Changed to use crate::error_types
 
 // Length of the salt string when encoded in Base64. Argon2 default is 22 characters for a 16-byte salt.
 pub const SALT_STRING_LEN: usize = 22;
