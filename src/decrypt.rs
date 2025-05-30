@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
-use crate::utils::{derive_encryption_key_with_salt}; 
+use crate::secret::{derive_encryption_key_with_salt}; // Changed from crate::utils
 use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN};
 
 /// Extracts the raw encrypted data payload from the carrier file (either .txt or .png).
@@ -28,7 +28,7 @@ fn extract_payload_from_carrier(
         let payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?;
         println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
         Ok(payload)
-    } else if input_extension == "png" {
+    } else if (input_extension == "png") {
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
         

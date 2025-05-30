@@ -8,7 +8,7 @@ use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
-use crate::utils::{derive_encryption_key_with_salt}; // Removed SALT_STRING_LEN, NONCE_STRING_LEN
+use crate::secret::{derive_encryption_key_with_salt}; // Changed from crate::utils
 
 // Define constants here
 pub const SALT_STRING_LEN: usize = 22;

@@ -5,7 +5,7 @@ use zeroize::Zeroizing;
 use argon2::password_hash::SaltString; // Added for generating salt in main
 use rand::rngs::OsRng; // Added for SaltString::generate
 
-mod utils;
+mod secret; // Changed from mod utils;
 mod error_types; 
 mod encrypt; 
 mod decrypt; 
@@ -28,7 +28,7 @@ fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
             let secret1_plain = read_password().expect("Failed to read secret");
 
             // Validate complexity for new secrets.
-            match utils::validate_password_complexity(&secret1_plain) {
+            match secret::validate_password_complexity(&secret1_plain) { // Changed from utils::
                 Ok(_) => { /* Password is complex enough */ }
                 Err(e) => {
                     eprintln!("Error: {}", e); // Print the specific complexity error
@@ -371,7 +371,7 @@ fn main() {
 
         if is_encrypt {
             let salt_for_folder = SaltString::generate(&mut OsRng);
-            match utils::derive_encryption_key_with_salt(&encryption_secret, &salt_for_folder) {
+            match secret::derive_encryption_key_with_salt(&encryption_secret, &salt_for_folder) { // Changed from utils::
                 Ok(derived_key) => {
                     process_folder_mode(
                         input_arg_str, 
