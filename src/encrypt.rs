@@ -247,9 +247,11 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use zeroize::Zeroizing;
-    use crate::utils::decrypt_image; // For round-trip testing
+    use crate::decrypt::decrypt_image; // Corrected: For round-trip testing
     use crate::error_types::CryptoImageError;
-    use image::{RgbImage, ImageFormat, random};
+    use image::{RgbImage, ImageFormat}; // Corrected: Removed 'random' from here
+    // Note: 'random' function is brought into scope by `use super::*;` 
+    // from the top-level `use rand::{..., random};`
 
 
     // Helper function to create a dummy PNG file for testing base image functionality.

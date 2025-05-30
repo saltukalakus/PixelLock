@@ -192,22 +192,22 @@ mod tests {
             _ => panic!("Test failed: too_short"),
         }
         // Missing uppercase
-        match validate_password_complexity("validpass123!@#") {
+        match validate_password_complexity("validpass123!@#a") { // Changed: Length 16. No uppercase.
             Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one uppercase letter."),
             _ => panic!("Test failed: no_uppercase"),
         }
         // Missing lowercase
-        match validate_password_complexity("VALIDPASS123!@#") {
+        match validate_password_complexity("VALIDPASS123!@#A") { // Changed: Length 16. No lowercase.
             Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one lowercase letter."),
             _ => panic!("Test failed: no_lowercase"),
         }
         // Missing digit
-        match validate_password_complexity("ValidPassword!@#") {
+        match validate_password_complexity("ValidPassword!@#") { // Length 16. No digit.
             Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one digit."),
             _ => panic!("Test failed: no_digit"),
         }
         // Missing symbol
-        match validate_password_complexity("ValidPassword123") {
+        match validate_password_complexity("ValidPassword123") { // Length 16. No symbol.
             Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one symbol (e.g., !@#$%^&*)."),
             _ => panic!("Test failed: no_symbol"),
         }
