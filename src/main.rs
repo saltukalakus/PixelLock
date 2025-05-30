@@ -1,10 +1,11 @@
 use std::{fs, io::{self, Write}, path::{Path}};
-use clap::{Arg, ArgAction, Command}; // Removed ArgMatches
+use clap::{Arg, ArgAction, Command}; 
 use rpassword::read_password;
 use zeroize::Zeroizing;
 
 mod utils;
-mod error_types; // Added module declaration
+mod error_types; 
+mod encrypt; // Added module declaration
 
 /// Prompts the user for a secret (password) and validates it if in encryption mode.
 /// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.
@@ -214,7 +215,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
 
                             // Perform encryption or decryption.
                             let operation_result = if is_encrypt {
-                                utils::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption).map(|_| ())
+                                encrypt::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption).map(|_| ())
                             } else {
                                 utils::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret)
                             };
@@ -336,7 +337,7 @@ fn main() {
         // Input is a single file.
         validate_file_exists(input_arg_str); // Ensure input file exists.
         if is_encrypt {
-            match utils::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption) {
+            match encrypt::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption) {
                 Ok(_original_format) => { /* Success message printed by encrypt_image */ } 
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);
