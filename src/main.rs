@@ -5,7 +5,8 @@ use zeroize::Zeroizing;
 
 mod utils;
 mod error_types; 
-mod encrypt; // Added module declaration
+mod encrypt; 
+mod decrypt; 
 
 /// Prompts the user for a secret (password) and validates it if in encryption mode.
 /// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.
@@ -217,7 +218,7 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
                             let operation_result = if is_encrypt {
                                 encrypt::encrypt_image(&current_input_file_path, &current_output_file_path_base, secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption).map(|_| ())
                             } else {
-                                utils::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret)
+                                decrypt::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret) // Updated to decrypt::
                             };
 
                             match operation_result {
@@ -345,7 +346,7 @@ fn main() {
                 }
             }
         } else if is_decrypt {
-            if let Err(e) = utils::decrypt_image(input_arg_str, output_arg_str, &encryption_secret) {
+            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret) { // Updated to decrypt::
                 eprintln!("Error decrypting file: {}", e);
                 std::process::exit(1); // Exit on error for single file mode
             }
