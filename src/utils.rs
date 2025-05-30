@@ -47,10 +47,11 @@ pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> Resul
     let m_cost = 65536; // 64 MiB
     let t_cost = 10;  // 10 iterations
     let p_cost = 4;   // 4 lanes (parallelism)
+    let output_len = 32; // For AES-256
 
     // argon2::Params::new returns Result<Params, password_hash::errors::InvalidParams>
     // We use the From<password_hash::errors::InvalidParams> for argon2::Error trait
-    let params = argon2::Params::new(m_cost, t_cost, p_cost, None)
+    let params = argon2::Params::new(m_cost, t_cost, p_cost, Some(output_len))
         .map_err(|e| CryptoImageError::Argon2(argon2::Error::from(e)))?;
 
     let argon2 = Argon2::new(
