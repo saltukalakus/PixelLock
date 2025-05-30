@@ -1,12 +1,114 @@
 use aes_gcm::{Aes256Gcm, Key, Nonce};
-use aes_gcm::aead::{Aead, KeyInit};
-use image::{ImageError, RgbImage, GenericImageView, ImageFormat};
+use aes_gcm::aead::{Aead, KeyInit, Error as AeadError};
+use image::{ImageError as ImgError, RgbImage, GenericImageView}; // Removed ImageFormat
 use rand::{rngs::OsRng, Rng, random};
-use std::{fs, path::{Path, PathBuf}};
-use argon2::{Argon2, PasswordHasher};
-use argon2::password_hash::{SaltString};
+use std::{array::TryFromSliceError, fmt, fs, path::{Path, PathBuf}}; // Added TryFromSliceError
+use argon2::{Argon2, PasswordHasher, Error as Argon2Error};
+use argon2::password_hash::{SaltString, Error as PasswordHashError};
 use zeroize::Zeroizing;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{Engine as _, engine::general_purpose, DecodeError as Base64DecodeError};
+
+// Custom Error Type
+#[derive(Debug)]
+pub enum CryptoImageError {
+    Io(std::io::Error),
+    Image(ImgError),
+    Encryption(String),
+    Decryption(String),
+    Aead(AeadError),
+    Argon2(Argon2Error),
+    PasswordHash(PasswordHashError),
+    Base64(Base64DecodeError),
+    Steganography(String),
+    PasswordComplexity(String),
+    InvalidParameter(String),
+    Utf8Error(std::str::Utf8Error),
+    TryFromSlice(TryFromSliceError), // Added variant
+}
+
+impl fmt::Display for CryptoImageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CryptoImageError::Io(e) => write!(f, "IO error: {}", e),
+            CryptoImageError::Image(e) => write!(f, "Image processing error: {}", e),
+            CryptoImageError::Encryption(msg) => write!(f, "Encryption error: {}", msg),
+            CryptoImageError::Decryption(msg) => write!(f, "Decryption error: {}", msg),
+            CryptoImageError::Aead(_) => write!(f, "AEAD operation error"),
+            CryptoImageError::Argon2(e) => write!(f, "Argon2 error: {}", e),
+            CryptoImageError::PasswordHash(e) => write!(f, "Password hashing error: {}", e),
+            CryptoImageError::Base64(e) => write!(f, "Base64 decoding error: {}", e),
+            CryptoImageError::Steganography(msg) => write!(f, "Steganography error: {}", msg),
+            CryptoImageError::PasswordComplexity(msg) => write!(f, "Password complexity error: {}", msg),
+            CryptoImageError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
+            CryptoImageError::Utf8Error(e) => write!(f, "UTF-8 conversion error: {}", e),
+            CryptoImageError::TryFromSlice(e) => write!(f, "Slice to array conversion error: {}", e), // Added display
+        }
+    }
+}
+
+impl std::error::Error for CryptoImageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CryptoImageError::Io(e) => Some(e),
+            CryptoImageError::Image(e) => Some(e),
+            CryptoImageError::Aead(_) => None, // aead::Error is (), does not implement Error
+            CryptoImageError::Argon2(_) => None, // argon2::Error source() returns None
+            CryptoImageError::PasswordHash(_) => None, // password_hash::Error source() returns None
+            CryptoImageError::Base64(e) => Some(e),
+            CryptoImageError::Utf8Error(e) => Some(e),
+            CryptoImageError::TryFromSlice(e) => Some(e), 
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for CryptoImageError {
+    fn from(err: std::io::Error) -> Self {
+        CryptoImageError::Io(err)
+    }
+}
+
+impl From<ImgError> for CryptoImageError {
+    fn from(err: ImgError) -> Self {
+        CryptoImageError::Image(err)
+    }
+}
+
+impl From<AeadError> for CryptoImageError { // aes_gcm::Error is an alias for aead::Error which is ()
+    fn from(err: AeadError) -> Self {
+        CryptoImageError::Aead(err)
+    }
+}
+
+impl From<Argon2Error> for CryptoImageError {
+    fn from(err: Argon2Error) -> Self {
+        CryptoImageError::Argon2(err)
+    }
+}
+
+impl From<PasswordHashError> for CryptoImageError {
+    fn from(err: PasswordHashError) -> Self {
+        CryptoImageError::PasswordHash(err)
+    }
+}
+
+impl From<Base64DecodeError> for CryptoImageError {
+    fn from(err: Base64DecodeError) -> Self {
+        CryptoImageError::Base64(err)
+    }
+}
+
+impl From<std::str::Utf8Error> for CryptoImageError {
+    fn from(err: std::str::Utf8Error) -> Self {
+        CryptoImageError::Utf8Error(err)
+    }
+}
+
+impl From<TryFromSliceError> for CryptoImageError { // Added From impl
+    fn from(err: TryFromSliceError) -> Self {
+        CryptoImageError::TryFromSlice(err)
+    }
+}
 
 // Length of the salt string when encoded in Base64. Argon2 default is 22 characters for a 16-byte salt.
 pub const SALT_STRING_LEN: usize = 22;
@@ -26,7 +128,7 @@ pub const NONCE_STRING_LEN: usize = 12; // Nonce length for AES-GCM
 ///
 /// # Returns
 /// * `Ok(String)` containing the original format of the input image on success.
-/// * `Err(ImageError)` on failure.
+/// * `Err(CryptoImageError)` on failure.
 pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P1,
     output_encrypted_path_param: P2,
@@ -34,7 +136,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     output_format_preference: &str,
     base_image_path_opt: Option<P3>,
     lsb_bits_per_channel: u8, 
-) -> Result<String, ImageError> {
+) -> Result<String, CryptoImageError> { // Changed return type
     let original_format_str = input_image_path
         .as_ref()
         .extension()
@@ -43,13 +145,12 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         .to_lowercase();
 
     // Read the entire input image file into bytes.
-    let img_bytes = fs::read(&input_image_path)
-        .map_err(ImageError::IoError)?;
+    let img_bytes = fs::read(&input_image_path)?; // Uses From<std::io::Error>
 
     // Generate a new random salt for Argon2.
     let salt: SaltString = SaltString::generate(&mut OsRng);
     // Derive the encryption key from the secret and salt using Argon2.
-    let derived_key = derive_encryption_key_with_salt(secret, &salt);
+    let derived_key = derive_encryption_key_with_salt(secret, &salt)?; // Changed
 
     // Initialize AES-256-GCM cipher with the derived key.
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
@@ -58,10 +159,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     let nonce = Nonce::from_slice(&nonce_bytes);
     // Encrypt the image data.
     let encrypted_data_core = cipher.encrypt(nonce, img_bytes.as_ref())
-        .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
-            image::error::ImageFormatHint::Unknown,
-            "Encryption failed".to_string(),
-        )))?;
+        .map_err(|_| CryptoImageError::Encryption("AEAD encryption failed".to_string()))?; // Changed
 
     // Get the salt as a Base64 string, then convert to bytes for storage.
     // This ensures the salt is stored in its standard string representation.
@@ -102,9 +200,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         let bits_per_pixel_payload = 3 * lsb_bits_per_channel as usize;
 
         if bits_per_pixel_payload == 0 {
-            return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                image::error::ParameterErrorKind::Generic("LSB bits per channel for payload cannot be zero.".to_string())
-            )));
+            return Err(CryptoImageError::InvalidParameter("LSB bits per channel for payload cannot be zero.".to_string())); // Changed
         }
 
         let pixels_needed_for_header = total_header_bits.div_ceil(bits_per_pixel_header);
@@ -118,18 +214,16 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
             // Load and prepare the user-provided base image.
             let base_path = base_path_ref.as_ref();
             if !base_path.exists() {
-                return Err(ImageError::IoError(std::io::Error::new(
+                return Err(CryptoImageError::Io(std::io::Error::new( // Changed
                     std::io::ErrorKind::NotFound,
                     format!("Base image not found: {:?}", base_path),
                 )));
             }
             if base_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase() != "png" {
-                return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                    image::error::ParameterErrorKind::Generic("Base image must be a PNG file.".to_string())
-                )));
+                return Err(CryptoImageError::InvalidParameter("Base image must be a PNG file.".to_string())); // Changed
             }
 
-            let base_dyn_image = image::open(base_path)?;
+            let base_dyn_image = image::open(base_path)?; // Uses From<ImgError>
             let base_rgb_image = base_dyn_image.to_rgb8();
             let base_width = base_rgb_image.width();
             let base_height = base_rgb_image.height();
@@ -173,7 +267,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
             // No base image provided, generate a new one with random pixel data.
             let width = (pixels_needed as f64).sqrt().ceil() as u32;
             let mut height = (pixels_needed as u32).div_ceil(width);
-            if width == 0 { return Err(ImageError::Parameter(image::error::ParameterError::from_kind(image::error::ParameterErrorKind::Generic("Calculated width is zero for new image".into())))); }
+            if width == 0 { return Err(CryptoImageError::InvalidParameter("Calculated width is zero for new image".into()));} // Changed
             if height == 0 { height = 1; }
 
             carrier_image = RgbImage::new(width, height);
@@ -255,21 +349,17 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         
         // Ensure all data was embedded.
         if embedding_header || bit_idx_overall < total_payload_bits {
-             return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-                image::error::ParameterErrorKind::Generic(
+             return Err(CryptoImageError::Steganography( // Changed
                     format!("Carrier image too small. Header embedded: {}, Payload bits embedded: {}/{}.", !embedding_header, bit_idx_overall, total_payload_bits)
-                )
-            )));
+            ));
         }
 
         // Save the steganographic image.
         let final_output_path = output_path_base.with_extension("png");
-        carrier_image.save(&final_output_path)?;
+        carrier_image.save(&final_output_path)?; // Uses From<ImgError>
         println!("Image encrypted successfully to (Steganography PNG): {:?}", final_output_path);
     } else {
-        return Err(ImageError::Parameter(image::error::ParameterError::from_kind(
-            image::error::ParameterErrorKind::Generic(format!("Unsupported output format: {}", output_format_preference))
-        )));
+        return Err(CryptoImageError::InvalidParameter(format!("Unsupported output format: {}", output_format_preference))); // Changed
     }
 
     Ok(original_format_str)
@@ -285,12 +375,12 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
 ///
 /// # Returns
 /// * `Ok(())` on success.
-/// * `Err(ImageError)` on failure.
+/// * `Err(CryptoImageError)` on failure.
 pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std::fmt::Debug>(
     input_encrypted_path_ref: PIn,
     output_decrypted_path_base: POut,
     secret: &Zeroizing<String>,
-) -> Result<(), ImageError> {
+) -> Result<(), CryptoImageError> { // Changed return type
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
     let input_extension = input_encrypted_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
@@ -299,16 +389,12 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     // Determine input format and extract raw payload.
     if input_extension == "txt" {
         // Read Base64 encoded data from .txt file.
-        let encrypted_file_content = fs::read_to_string(input_encrypted_path)?;
-        encrypted_file_data_payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())
-            .map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Unknown,
-                format!("Base64 decoding failed for .txt file: {}", e),
-            )))?;
+        let encrypted_file_content = fs::read_to_string(input_encrypted_path)?; // Uses From<std::io::Error>
+        encrypted_file_data_payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?; // Uses From<Base64DecodeError>
         println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
     } else if input_extension == "png" {
         // Extract embedded data from steganographic PNG file.
-        let carrier_image = image::open(input_encrypted_path)?;
+        let carrier_image = image::open(input_encrypted_path)?; // Uses From<ImgError>
         let (width, height) = carrier_image.dimensions();
         
         let mut extracted_bytes_buffer = Vec::new();
@@ -344,33 +430,29 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
                                 break 'header_extraction_loop;
                             }
                         }
-                    }
-                }
+                    } // Closes `for bit_k` loop
+                    if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
+                } // <<< This closing brace was missing for the `for &channel_value` loop
                  if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
             }
              if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
         }
 
         if bytes_extracted_count < header_len_bytes {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+            return Err(CryptoImageError::Steganography( // Changed
                 format!("Steganography PNG too small to extract full header. Expected {} bytes, got {}.", header_len_bytes, bytes_extracted_count),
-            )));
+            ));
         }
         
         let lsb_bits_for_payload = extracted_bytes_buffer[0];
         if !(1..=4).contains(&lsb_bits_for_payload) {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+            return Err(CryptoImageError::Steganography( // Changed
                 format!("Invalid LSB configuration in steganography header: {} (must be 1-4).", lsb_bits_for_payload),
-            )));
+            ));
         }
 
         let payload_len_arr: [u8; 4] = extracted_bytes_buffer[1..5].try_into()
-            .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                "Failed to convert extracted payload length bytes.".to_string(),
-            )))?;
+            .map_err(|_| CryptoImageError::Steganography("Failed to convert extracted payload length bytes.".to_string()))?; // Changed
         let payload_len = u32::from_be_bytes(payload_len_arr) as usize;
         
         println!("Header extracted: LSBs for payload = {}, Payload length = {}. Attempting to extract payload...", lsb_bits_for_payload, payload_len);
@@ -424,9 +506,8 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
                                 // Header fully extracted
                                 let lsb_val = all_extracted_data_bytes[0];
                                 if !(1..=4).contains(&lsb_val) {
-                                     return Err(ImageError::Decoding(image::error::DecodingError::new(
-                                        image::error::ImageFormatHint::Exact(ImageFormat::Png),
-                                        format!("Invalid LSB config in header: {}", lsb_val))));
+                                     return Err(CryptoImageError::Steganography( // Changed
+                                        format!("Invalid LSB config in header: {}", lsb_val)));
                                 }
                                 lsb_config_for_payload_opt = Some(lsb_val);
 
@@ -443,7 +524,7 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
                                     break 'full_extraction_loop; // No payload to extract
                                 }
                             } else if !extracting_header_stage &&
-                                      (actual_payload_len_opt == Some(bytes_extracted_count))
+                                      actual_payload_len_opt == Some(bytes_extracted_count)
                             {
                                 // Payload fully extracted
                                 break 'full_extraction_loop;
@@ -471,61 +552,48 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         }
 
         if extracting_header_stage || lsb_config_for_payload_opt.is_none() || actual_payload_len_opt.is_none() {
-            return Err(ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+            return Err(CryptoImageError::Steganography( // Changed
                 "Failed to extract steganography header or determine payload parameters.".to_string(),
-            )));
+            ));
         }
         
         let final_payload_len = actual_payload_len_opt.unwrap();
         if all_extracted_data_bytes.len() < final_payload_len {
-             return Err(ImageError::Decoding(image::error::DecodingError::new(
-                image::error::ImageFormatHint::Exact(ImageFormat::Png),
+             return Err(CryptoImageError::Steganography( // Changed
                 format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", final_payload_len, all_extracted_data_bytes.len()),
-            )));
+            ));
         }
         
         encrypted_file_data_payload = all_extracted_data_bytes; // These are the actual payload bytes
         println!("Decrypting from Steganography PNG file (LSB {}): {:?}", lsb_config_for_payload_opt.unwrap(), input_encrypted_path);
 
     } else {
-        return Err(ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
-            image::error::ImageFormatHint::Unknown,
-            image::error::UnsupportedErrorKind::Format(image::error::ImageFormatHint::Exact(image::ImageFormat::from_extension(input_extension).unwrap_or(image::ImageFormat::Png))),
-        )));
+        return Err(CryptoImageError::InvalidParameter( // Changed
+            format!("Unsupported input file type for decryption: .{}", input_extension)
+        ));
     }
 
     // Validate payload length.
     if encrypted_file_data_payload.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
-        return Err(ImageError::Decoding(image::error::DecodingError::new(
-            image::error::ImageFormatHint::Unknown,
-            "Extracted encrypted data is too short".to_string(),
-        )));
+        return Err(CryptoImageError::Decryption("Extracted encrypted data is too short".to_string())); // Changed
     }
     // Split the payload into salt, nonce, and ciphertext.
     let (salt_string_bytes, rest) = encrypted_file_data_payload.split_at(SALT_STRING_LEN);
     let (nonce_bytes, ciphertext) = rest.split_at(NONCE_STRING_LEN);
 
     // Convert salt bytes (which are Base64 string representation) back to SaltString.
-    let salt_str = std::str::from_utf8(salt_string_bytes).map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
-        image::error::ImageFormatHint::Unknown, "Invalid salt UTF-8".to_string()
-    )))?;
-    let salt = SaltString::from_b64(salt_str).map_err(|e| ImageError::Decoding(image::error::DecodingError::new(
-        image::error::ImageFormatHint::Unknown, format!("Invalid salt format: {}", e)
-    )))?;
+    let salt_str = std::str::from_utf8(salt_string_bytes)?; // Uses From<std::str::Utf8Error>
+    let salt = SaltString::from_b64(salt_str)?; // Uses From<PasswordHashError>
 
     // Derive the decryption key using the extracted salt and user's secret.
-    let derived_key = derive_encryption_key_with_salt(secret, &salt);
+    let derived_key = derive_encryption_key_with_salt(secret, &salt)?; // Changed
 
     // Initialize AES-256-GCM cipher.
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
     let nonce = Nonce::from_slice(nonce_bytes);
     // Decrypt the ciphertext.
     let decrypted_data = cipher.decrypt(nonce, ciphertext)
-        .map_err(|_| ImageError::Decoding(image::error::DecodingError::new(
-            image::error::ImageFormatHint::Unknown,
-            "Decryption failed (possibly wrong secret or corrupted file)".to_string(),
-        )))?;
+        .map_err(|_| CryptoImageError::Decryption("AEAD decryption failed (possibly wrong secret or corrupted file)".to_string()))?; // Changed
     
     let output_decrypted_path_base_buf = PathBuf::from(output_decrypted_path_base.as_ref());
 
@@ -534,11 +602,11 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         let final_output_path = output_decrypted_path_base_buf.with_extension(format);
         println!("Detected file format: {:?}. Saving decrypted file to: {:?}", format, final_output_path);
         fs::write(&final_output_path, decrypted_data)
-            .map_err(ImageError::IoError)?;
+            .map_err(CryptoImageError::Io)?;
     } else {
         eprintln!("Warning: Could not detect file format. Saving decrypted data as is to: {:?}", output_decrypted_path_base_buf);
         fs::write(&output_decrypted_path_base_buf, decrypted_data)
-            .map_err(ImageError::IoError)?;
+            .map_err(CryptoImageError::Io)?;
     }
 
     Ok(())
@@ -580,21 +648,20 @@ pub fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
 ///
 /// # Returns
 /// * A 32-byte array representing the derived key.
-pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> [u8; 32] {
+pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> Result<[u8; 32], CryptoImageError> { // Changed return type
     // Use Argon2id (default for Argon2 crate).
     let argon2 = Argon2::default();
 
     // Hash the password with the salt.
     let password_hash = argon2
-        .hash_password(secret.as_bytes(), salt)
-        .expect("Failed to hash password");
+        .hash_password(secret.as_bytes(), salt)?; // Uses From<Argon2Error>
 
     // Extract the raw hash output.
-    let derived_key_output = password_hash.hash.expect("Hash missing in password hash");
+    let derived_key_output = password_hash.hash.ok_or_else(|| CryptoImageError::Encryption("Argon2 password hash output is unexpectedly None".to_string()))?;
     let key_bytes = derived_key_output.as_bytes();
 
     // Argon2 output can be longer than 32 bytes depending on params; we take the first 32 bytes for AES-256.
-    key_bytes[..32].try_into().expect("Derived key should be 32 bytes")
+    key_bytes[..32].try_into().map_err(CryptoImageError::from) // Explicitly map TryFromSliceError
 }
 
 /// Validates the complexity of a given password.
@@ -605,11 +672,10 @@ pub fn derive_encryption_key_with_salt(secret: &str, salt: &SaltString) -> [u8; 
 /// # Returns
 /// * `true` if the password meets all complexity requirements.
 /// * `false` otherwise, and prints an error message.
-pub fn validate_password_complexity(password: &str) -> bool {
+pub fn validate_password_complexity(password: &str) -> Result<(), CryptoImageError> {
     // Check minimum length.
     if password.len() < 16 {
-        eprintln!("Error: Password must be at least 16 characters long.");
-        return false;
+        return Err(CryptoImageError::PasswordComplexity("Password must be at least 16 characters long.".to_string()));
     }
     // Check for character types.
     let has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
@@ -618,22 +684,18 @@ pub fn validate_password_complexity(password: &str) -> bool {
     let has_symbol = password.chars().any(|c| c.is_ascii_punctuation() || c.is_ascii_graphic() && !c.is_ascii_alphanumeric());
 
     if !has_uppercase {
-        eprintln!("Error: Password must contain at least one uppercase letter.");
-        return false;
+        return Err(CryptoImageError::PasswordComplexity("Password must contain at least one uppercase letter.".to_string()));
     }
     if !has_lowercase {
-        eprintln!("Error: Password must contain at least one lowercase letter.");
-        return false;
+        return Err(CryptoImageError::PasswordComplexity("Password must contain at least one lowercase letter.".to_string()));
     }
     if !has_digit {
-        eprintln!("Error: Password must contain at least one digit.");
-        return false;
+        return Err(CryptoImageError::PasswordComplexity("Password must contain at least one digit.".to_string()));
     }
     if !has_symbol {
-        eprintln!("Error: Password must contain at least one symbol (e.g., !@#$%^&*).");
-        return false;
+        return Err(CryptoImageError::PasswordComplexity("Password must contain at least one symbol (e.g., !@#$%^&*).".to_string()));
     }
-    true
+    Ok(())
 }
 
 
@@ -643,12 +705,12 @@ mod tests {
     use tempfile::tempdir; // For creating temporary directories for tests
 
     // Helper function to create a dummy PNG file for testing base image functionality.
-    fn create_dummy_png(path: &Path, width: u32, height: u32) -> Result<(), ImageError> {
+    fn create_dummy_png(path: &Path, width: u32, height: u32) -> Result<(), CryptoImageError> { // Changed return type
         let mut img = RgbImage::new(width, height);
         for pixel in img.pixels_mut() {
             *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
         }
-        img.save_with_format(path, ImageFormat::Png)?; // Explicitly save as PNG
+        img.save_with_format(path, image::ImageFormat::Png)?; // Uses From<ImgError>, qualified ImageFormat
         Ok(())
     }
 
@@ -657,8 +719,8 @@ mod tests {
         let secret = "test_password";
         let salt = SaltString::from_b64("gIq+kM3PS2s7gKbtLgGjGA").unwrap(); // Fixed salt for testing
 
-        let key1 = derive_encryption_key_with_salt(secret, &salt);
-        let key2 = derive_encryption_key_with_salt(secret, &salt);
+        let key1 = derive_encryption_key_with_salt(secret, &salt).unwrap(); // Updated to unwrap Result
+        let key2 = derive_encryption_key_with_salt(secret, &salt).unwrap(); // Updated to unwrap Result
 
         assert_eq!(key1.len(), 32);
         assert_eq!(key1, key2, "Key derivation should be deterministic for the same secret and salt.");
@@ -717,7 +779,7 @@ mod tests {
         
         // Assuming decrypt_image saves with a detected extension or no extension if unknown
         // For this test, we expect it to be raw data, so we check the path without specific extension first
-        // or with a common one if detect_file_format returns None and saves as is.
+        // or with a common one if detect_file_format returns None.
         // Since original_data is not a known image format, detect_file_format will return None.
         // The decrypt_image function will then save it without an extension (using output_decrypted_path_base as is).
         let decrypted_data_content = fs::read(&decrypted_path)?;
@@ -829,46 +891,86 @@ mod tests {
 
     #[test]
     fn test_validate_password_complexity_valid() {
-        assert!(validate_password_complexity("ValidPass123!@#$")); // Changed: Added '$' to make length 16
-        assert!(validate_password_complexity("Another_Good-Password456$"));
+        assert!(validate_password_complexity("ValidPass123!@#$").is_ok()); // Changed: Added '$' to make length 16
+        assert!(validate_password_complexity("Another_Good-Password456$").is_ok());
     }
 
     #[test]
     fn test_validate_password_complexity_too_short() {
-        assert!(!validate_password_complexity("Short1!"));
+        match validate_password_complexity("Short1!") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => {
+                assert_eq!(msg, "Password must be at least 16 characters long.");
+            }
+            _ => panic!("Expected PasswordComplexity error for short password."),
+        }
     }
 
     #[test]
     fn test_validate_password_complexity_no_uppercase() {
-        assert!(!validate_password_complexity("nouppercase123!@#"));
+        match validate_password_complexity("nouppercase123!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => {
+                assert_eq!(msg, "Password must contain at least one uppercase letter.");
+            }
+            _ => panic!("Expected PasswordComplexity error for no uppercase."),
+        }
     }
 
     #[test]
     fn test_validate_password_complexity_no_lowercase() {
-        assert!(!validate_password_complexity("NOLOWERCASE123!@#"));
+        match validate_password_complexity("NOLOWERCASE123!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => {
+                assert_eq!(msg, "Password must contain at least one lowercase letter.");
+            }
+            _ => panic!("Expected PasswordComplexity error for no lowercase."),
+        }
     }
 
     #[test]
     fn test_validate_password_complexity_no_digit() {
-        assert!(!validate_password_complexity("NoDigitPassword!@#"));
+        match validate_password_complexity("NoDigitPassword!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => {
+                assert_eq!(msg, "Password must contain at least one digit.");
+            }
+            _ => panic!("Expected PasswordComplexity error for no digit."),
+        }
     }
 
     #[test]
     fn test_validate_password_complexity_no_symbol() {
-        assert!(!validate_password_complexity("NoSymbolPassword123"));
+        match validate_password_complexity("NoSymbolPassword123") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => {
+                assert_eq!(msg, "Password must contain at least one symbol (e.g., !@#$%^&*).");
+            }
+            _ => panic!("Expected PasswordComplexity error for no symbol."),
+        }
     }
 
     #[test]
     fn test_validate_password_complexity_all_criteria_missing_sequentially() {
         // Too short
-        assert!(!validate_password_complexity("Pass1!"));
+        match validate_password_complexity("Pass1!") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must be at least 16 characters long."),
+            _ => panic!("Test failed: too_short"),
+        }
         // Missing uppercase
-        assert!(!validate_password_complexity("validpass123!@#"));
+        match validate_password_complexity("validpass123!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one uppercase letter."),
+            _ => panic!("Test failed: no_uppercase"),
+        }
         // Missing lowercase
-        assert!(!validate_password_complexity("VALIDPASS123!@#"));
+        match validate_password_complexity("VALIDPASS123!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one lowercase letter."),
+            _ => panic!("Test failed: no_lowercase"),
+        }
         // Missing digit
-        assert!(!validate_password_complexity("ValidPassword!@#"));
+        match validate_password_complexity("ValidPassword!@#") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one digit."),
+            _ => panic!("Test failed: no_digit"),
+        }
         // Missing symbol
-        assert!(!validate_password_complexity("ValidPassword123"));
+        match validate_password_complexity("ValidPassword123") {
+            Err(CryptoImageError::PasswordComplexity(msg)) => assert_eq!(msg, "Password must contain at least one symbol (e.g., !@#$%^&*)."),
+            _ => panic!("Test failed: no_symbol"),
+        }
     }
 }

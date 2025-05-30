@@ -23,9 +23,13 @@ fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
             let secret1_plain = read_password().expect("Failed to read secret");
 
             // Validate complexity for new secrets.
-            if !utils::validate_password_complexity(&secret1_plain) {
-                println!("Please try again, ensuring the password meets all complexity requirements.");
-                continue;
+            match utils::validate_password_complexity(&secret1_plain) {
+                Ok(_) => { /* Password is complex enough */ }
+                Err(e) => {
+                    eprintln!("Error: {}", e); // Print the specific complexity error
+                    println!("Please try again, ensuring the password meets all complexity requirements.");
+                    continue;
+                }
             }
 
             print!("Re-enter your new secret: ");
@@ -216,6 +220,11 @@ fn process_folder_mode(input_dir_str: &str, output_dir_str: &str, is_encrypt: bo
 
                             match operation_result {
                                 Ok(_) => {
+                                    // Message is printed by encrypt_image/decrypt_image or the print! above
+                                    // For successful decryption, the success message is in decrypt_image.
+                                    // For successful encryption, it's in encrypt_image.
+                                    // We add a simple "Done." here for folder mode.
+                                    println!("Done.");
                                     files_processed_successfully += 1;
                                 }
                                 Err(e) => {
@@ -327,15 +336,18 @@ fn main() {
         validate_file_exists(input_arg_str); // Ensure input file exists.
         if is_encrypt {
             match utils::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption) {
-                Ok(_original_format) => {} // Success message printed by encrypt_image
+                Ok(_original_format) => { /* Success message printed by encrypt_image */ } 
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);
+                    std::process::exit(1); // Exit on error for single file mode
                 }
             }
         } else if is_decrypt {
             if let Err(e) = utils::decrypt_image(input_arg_str, output_arg_str, &encryption_secret) {
                 eprintln!("Error decrypting file: {}", e);
+                std::process::exit(1); // Exit on error for single file mode
             }
+            // Success message is printed by decrypt_image
         }
     }
 }
