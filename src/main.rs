@@ -131,7 +131,7 @@ fn build_cli_command() -> Command { // Renamed and changed return type
                 .value_parser(clap::value_parser!(u8).range(1..=4)) // Expects 1, 2, 3, or 4
                 .default_value("1")
                 .required(false)
-                .help("LSB ratio (1-4) for steganography when using a base image (-b) with PNG format. Higher means more data per pixel but more visible change.")
+                .help("LSB ratio (1-4) for steganography when using a base image (-b) with PNG format. Higher means more data per pixel but more visible change. Not used if a base image is not provided (defaults to full 8-bit embedding for generated images).")
         )
 }
 
@@ -302,9 +302,10 @@ fn main() {
     // Determine LSB bits for encryption based on settings.
     let lsb_bits_for_encryption = if output_format_preference == "png" {
         if base_image_path_str_opt.is_some() {
-            ratio_from_cli // Use user-specified ratio if base image is provided.
+            ratio_from_cli // Use user-specified ratio (1-4) if base image is provided.
         } else {
-            1 // Default to 1 LSB if no base image (new image generated).
+            // No base image (new image generated), use "full 8-bit" embedding.
+            8 
         }
     } else {
         1 // Default for non-PNG or non-steganography scenarios (though not directly used for .txt).

@@ -252,8 +252,26 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
                          }
                     }
 
-                    let current_clear_mask: u8 = 0xFF << active_lsb_bits;
-                    let current_data_extract_mask: u8 = (1 << active_lsb_bits) - 1;
+                    // Corrected mask calculation for active_lsb_bits potentially being 8
+                    let actual_clear_mask: u8;
+                    let actual_data_extract_mask: u8;
+
+                    if active_lsb_bits == 8 {
+                        actual_clear_mask = 0x00;
+                        actual_data_extract_mask = 0xFF;
+                    } else if active_lsb_bits > 0 && active_lsb_bits < 8 { // Handles 1-7
+                        actual_clear_mask = 0xFF << active_lsb_bits;
+                        actual_data_extract_mask = (1 << active_lsb_bits) - 1;
+                    } else {
+                        // Should not happen given current logic (lsb_for_header=1, lsb_bits_per_channel=1-4 or 8)
+                        // but as a fallback, treat as no-op or error.
+                        // For safety, let's assume it means 0 bits, effectively a no-op on this channel.
+                        actual_clear_mask = 0xFF; 
+                        actual_data_extract_mask = 0x00;
+                        // Or, return an error:
+                        // return Err(CryptoImageError::InvalidParameter(format!("Invalid active_lsb_bits: {}", active_lsb_bits)));
+                    }
+
 
                     let mut bits_for_channel: u8 = 0;
                     for bit_k in 0..active_lsb_bits {
@@ -272,7 +290,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
                             break; 
                         }
                     }
-                    pixel.0[channel_idx] = (pixel.0[channel_idx] & current_clear_mask) | (bits_for_channel & current_data_extract_mask);
+                    pixel.0[channel_idx] = (pixel.0[channel_idx] & actual_clear_mask) | (bits_for_channel & actual_data_extract_mask);
                 }
             }
         }

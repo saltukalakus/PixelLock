@@ -83,9 +83,9 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         }
         
         let lsb_bits_for_payload = extracted_bytes_buffer[0];
-        if !(1..=4).contains(&lsb_bits_for_payload) {
+        if !((1..=4).contains(&lsb_bits_for_payload) || lsb_bits_for_payload == 8) {
             return Err(CryptoImageError::Steganography(
-                format!("Invalid LSB configuration in steganography header: {} (must be 1-4).", lsb_bits_for_payload),
+                format!("Invalid LSB/embedding configuration in steganography header: {} (must be 1-4 for LSB, or 8 for full-bit embedding).", lsb_bits_for_payload),
             ));
         }
 
@@ -127,9 +127,9 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
 
                             if extracting_header_stage && bytes_extracted_count == header_len_bytes {
                                 let lsb_val = all_extracted_data_bytes[0];
-                                if !(1..=4).contains(&lsb_val) {
+                                if !((1..=4).contains(&lsb_val) || lsb_val == 8) {
                                      return Err(CryptoImageError::Steganography(
-                                        format!("Invalid LSB config in header: {}", lsb_val)));
+                                        format!("Invalid LSB/embedding config in header: {} (must be 1-4 or 8)", lsb_val)));
                                 }
                                 lsb_config_for_payload_opt = Some(lsb_val);
 
