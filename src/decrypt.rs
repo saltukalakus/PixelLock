@@ -10,6 +10,221 @@ use crate::error_types::CryptoImageError;
 use crate::utils::{derive_encryption_key_with_salt}; 
 use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN};
 
+/// Extracts the raw encrypted data payload from the carrier file (either .txt or .png).
+///
+/// # Arguments
+/// * `input_encrypted_path` - Path to the encrypted file.
+/// * `input_extension` - The lowercased extension of the input file.
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` containing the raw encrypted payload.
+/// * `Err(CryptoImageError)` on failure.
+fn extract_payload_from_carrier(
+    input_encrypted_path: &Path,
+    input_extension: &str,
+) -> Result<Vec<u8>, CryptoImageError> {
+    if input_extension == "txt" {
+        let encrypted_file_content = fs::read_to_string(input_encrypted_path)?;
+        let payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?;
+        println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
+        Ok(payload)
+    } else if input_extension == "png" {
+        let carrier_image = image::open(input_encrypted_path)?;
+        let (width, height) = carrier_image.dimensions();
+        
+        let mut extracted_bytes_buffer = Vec::new();
+        let mut current_reconstructed_byte: u8 = 0;
+        let mut bits_in_current_byte: u8 = 0;
+        let mut bytes_extracted_count = 0;
+
+        let lsb_bits_for_header: u8 = 1;
+        let data_extract_mask_header: u8 = (1 << lsb_bits_for_header) - 1;
+        let header_len_bytes: usize = 5; // 1 byte for LSB config, 4 bytes for payload length
+        
+        println!("Attempting to extract steganography header ({} bytes using {} LSB/channel)...", header_len_bytes, lsb_bits_for_header);
+
+        // First pass: Extract just the header to get LSB config and payload length
+        'header_extraction_loop: for y in 0..height {
+            for x in 0..width {
+                let pixel_channels = carrier_image.get_pixel(x,y).0;
+                for &channel_value in pixel_channels.iter().take(3) { // Iterate over R, G, B channels
+                    // Extract LSB_BITS_FOR_HEADER (1 bit) from the channel
+                    // In this loop, we are always using lsb_bits_for_header (1)
+                    let current_extracted_bit = (channel_value >> 0) & data_extract_mask_header; // Extract the 0-th bit
+                    current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
+                    bits_in_current_byte += 1;
+
+                    if bits_in_current_byte == 8 {
+                        extracted_bytes_buffer.push(current_reconstructed_byte);
+                        bytes_extracted_count += 1;
+                        current_reconstructed_byte = 0;
+                        bits_in_current_byte = 0;
+
+                        if bytes_extracted_count == header_len_bytes {
+                            break 'header_extraction_loop;
+                        }
+                    }
+                }
+                 if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
+            }
+             if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
+        }
+
+        if bytes_extracted_count < header_len_bytes {
+            return Err(CryptoImageError::Steganography(
+                format!("Steganography PNG too small to extract full header. Expected {} bytes, got {}.", header_len_bytes, bytes_extracted_count),
+            ));
+        }
+        
+        let lsb_bits_for_payload_from_header = extracted_bytes_buffer[0];
+        if !((1..=4).contains(&lsb_bits_for_payload_from_header) || lsb_bits_for_payload_from_header == 8) {
+            return Err(CryptoImageError::Steganography(
+                format!("Invalid LSB/embedding configuration in steganography header: {} (must be 1-4 for LSB, or 8 for full-bit embedding).", lsb_bits_for_payload_from_header),
+            ));
+        }
+
+        let payload_len_arr: [u8; 4] = extracted_bytes_buffer[1..5].try_into()
+            .map_err(|_| CryptoImageError::Steganography("Failed to convert extracted payload length bytes.".to_string()))?;
+        let actual_payload_len = u32::from_be_bytes(payload_len_arr) as usize;
+        
+        println!("Header extracted: LSBs for payload = {}, Payload length = {}. Attempting to extract payload...", lsb_bits_for_payload_from_header, actual_payload_len);
+
+        // Reset for full payload extraction (including re-extracting header for simplicity of loop structure,
+        // but now using the determined lsb_bits_for_payload for the payload part)
+        let mut all_extracted_data_bytes = Vec::new();
+        current_reconstructed_byte = 0;
+        bits_in_current_byte = 0;
+        bytes_extracted_count = 0; // Counts bytes of the final payload (salt+nonce+ciphertext)
+
+        let mut lsb_config_for_payload_opt: Option<u8> = None;
+        let mut expected_total_payload_len_opt: Option<usize> = None;
+        let mut extracting_header_stage = true; // True while extracting the 5-byte header, false for main payload
+        let mut bits_processed_in_current_pixel_group = 0; // Tracks bits for current header/payload stage
+
+        'full_extraction_loop: for y_img in 0..height {
+            for x_img in 0..width {
+                let pixel_channels_val = carrier_image.get_pixel(x_img, y_img).0;
+                for &channel_val_pix in pixel_channels_val.iter().take(3) { // R, G, B
+                    let lsb_to_use_now = if extracting_header_stage {
+                        lsb_bits_for_header // Always 1 for header
+                    } else {
+                        lsb_config_for_payload_opt.unwrap_or(1) // Should be set after header
+                    };
+
+                    for bit_k_idx in 0..lsb_to_use_now {
+                        // Check if we have extracted enough bits for the current stage (header or payload)
+                        if extracting_header_stage {
+                            if bits_processed_in_current_pixel_group >= (header_len_bytes * 8) {
+                                // This condition should ideally be caught by bytes_extracted_count check below
+                                // but acts as a safeguard for bit-level counting.
+                                // Transition to payload extraction is handled when header_len_bytes are formed.
+                            }
+                        } else {
+                            if expected_total_payload_len_opt.is_some_and(|l| bits_processed_in_current_pixel_group >= l * 8) {
+                                // Similar safeguard for payload bits.
+                                // Transition/exit is handled by bytes_extracted_count for payload.
+                            }
+                        }
+
+
+                        let current_extracted_bit = (channel_val_pix >> bit_k_idx) & 1;
+                        current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
+                        bits_in_current_byte += 1;
+                        bits_processed_in_current_pixel_group +=1;
+
+                        if bits_in_current_byte == 8 { // A full byte has been reconstructed
+                            if extracting_header_stage {
+                                all_extracted_data_bytes.push(current_reconstructed_byte); // Temp store header bytes
+                            } else {
+                                // This byte belongs to the main payload (salt+nonce+ciphertext)
+                                // Check if we are still within the expected payload length
+                                if expected_total_payload_len_opt.is_none() || bytes_extracted_count < expected_total_payload_len_opt.unwrap() {
+                                     all_extracted_data_bytes.push(current_reconstructed_byte);
+                                } else {
+                                    // We've collected more bytes than expected for the payload, something is wrong or it's just padding.
+                                    // For now, we assume the length in header is exact.
+                                }
+                            }
+                            bytes_extracted_count += 1;
+                            current_reconstructed_byte = 0;
+                            bits_in_current_byte = 0;
+
+                            if extracting_header_stage && bytes_extracted_count == header_len_bytes {
+                                // Header fully extracted
+                                let lsb_val = all_extracted_data_bytes[0];
+                                if !((1..=4).contains(&lsb_val) || lsb_val == 8) {
+                                     return Err(CryptoImageError::Steganography(
+                                        format!("Invalid LSB/embedding config in header: {} (must be 1-4 or 8)", lsb_val)));
+                                }
+                                lsb_config_for_payload_opt = Some(lsb_val);
+
+                                let len_arr_payload: [u8; 4] = all_extracted_data_bytes[1..5].try_into().unwrap();
+                                expected_total_payload_len_opt = Some(u32::from_be_bytes(len_arr_payload) as usize);
+                                
+                                // println!("Steg Header Decoded: LSBs for payload: {}, Payload length: {}", lsb_val, expected_total_payload_len_opt.unwrap());
+
+                                extracting_header_stage = false; // Switch to payload extraction mode
+                                bytes_extracted_count = 0; // Reset byte counter for the main payload
+                                all_extracted_data_bytes.clear(); // Clear header bytes, start collecting payload
+                                bits_processed_in_current_pixel_group = 0; // Reset bit counter for payload stage
+
+
+                                if expected_total_payload_len_opt.unwrap() == 0 { // No payload to extract
+                                    break 'full_extraction_loop;
+                                }
+                            } else if !extracting_header_stage &&
+                                      expected_total_payload_len_opt == Some(bytes_extracted_count)
+                            { // Main payload fully extracted
+                                break 'full_extraction_loop;
+                            }
+                        }
+                    }
+                    // Check after each channel if payload is complete (if not in header stage)
+                    if !extracting_header_stage &&
+                       expected_total_payload_len_opt.is_some_and(|len_val|
+                           bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0) // Handles 0-length payload
+                       )
+                    {
+                        break 'full_extraction_loop;
+                    }
+                }
+                // Check after each pixel if payload is complete
+                if !extracting_header_stage &&
+                   expected_total_payload_len_opt.is_some_and(|len_val|
+                       bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0)
+                   )
+                {
+                    break 'full_extraction_loop;
+                }
+            }
+        }
+
+        if extracting_header_stage || lsb_config_for_payload_opt.is_none() || expected_total_payload_len_opt.is_none() {
+            return Err(CryptoImageError::Steganography(
+                "Failed to extract steganography header or determine payload parameters.".to_string(),
+            ));
+        }
+        
+        let final_payload_len = expected_total_payload_len_opt.unwrap();
+        if all_extracted_data_bytes.len() < final_payload_len {
+             return Err(CryptoImageError::Steganography(
+                format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", final_payload_len, all_extracted_data_bytes.len()),
+            ));
+        }
+        
+        // Trim to exact length if more bytes were collected due to pixel boundaries
+        all_extracted_data_bytes.truncate(final_payload_len);
+
+        println!("Decrypting from Steganography PNG file (LSB {}): {:?}", lsb_config_for_payload_opt.unwrap(), input_encrypted_path);
+        Ok(all_extracted_data_bytes)
+
+    } else {
+        Err(CryptoImageError::InvalidParameter(
+            format!("Unsupported input file type for decryption: .{}", input_extension)
+        ))
+    }
+}
+
 /// Detects common image file formats based on magic bytes.
 ///
 /// # Arguments
@@ -57,169 +272,8 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
     let input_extension = input_encrypted_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
-    let encrypted_file_data_payload: Vec<u8>;
-
-    if input_extension == "txt" {
-        let encrypted_file_content = fs::read_to_string(input_encrypted_path)?;
-        encrypted_file_data_payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?;
-        println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
-    } else if input_extension == "png" {
-        let carrier_image = image::open(input_encrypted_path)?;
-        let (width, height) = carrier_image.dimensions();
-        
-        let mut extracted_bytes_buffer = Vec::new();
-        let mut current_reconstructed_byte: u8 = 0;
-        let mut bits_in_current_byte: u8 = 0;
-        let mut bytes_extracted_count = 0;
-
-        let lsb_bits_for_header: u8 = 1;
-        let data_extract_mask_header: u8 = (1 << lsb_bits_for_header) - 1;
-        let header_len_bytes: usize = 5;
-        
-        println!("Attempting to extract steganography header ({} bytes using {} LSB/channel)...", header_len_bytes, lsb_bits_for_header);
-
-        'header_extraction_loop: for y in 0..height {
-            for x in 0..width {
-                let pixel_channels = carrier_image.get_pixel(x,y).0;
-                for &channel_value in pixel_channels.iter().take(3) {
-                    for bit_k in 0..lsb_bits_for_header {
-                        let current_extracted_bit = (channel_value >> bit_k) & data_extract_mask_header;
-                        current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
-                        bits_in_current_byte += 1;
-
-                        if bits_in_current_byte == 8 {
-                            extracted_bytes_buffer.push(current_reconstructed_byte);
-                            bytes_extracted_count += 1;
-                            current_reconstructed_byte = 0;
-                            bits_in_current_byte = 0;
-
-                            if bytes_extracted_count == header_len_bytes {
-                                break 'header_extraction_loop;
-                            }
-                        }
-                    }
-                    if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
-                }
-                 if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
-            }
-             if bytes_extracted_count == header_len_bytes { break 'header_extraction_loop; }
-        }
-
-        if bytes_extracted_count < header_len_bytes {
-            return Err(CryptoImageError::Steganography(
-                format!("Steganography PNG too small to extract full header. Expected {} bytes, got {}.", header_len_bytes, bytes_extracted_count),
-            ));
-        }
-        
-        let lsb_bits_for_payload = extracted_bytes_buffer[0];
-        if !((1..=4).contains(&lsb_bits_for_payload) || lsb_bits_for_payload == 8) {
-            return Err(CryptoImageError::Steganography(
-                format!("Invalid LSB/embedding configuration in steganography header: {} (must be 1-4 for LSB, or 8 for full-bit embedding).", lsb_bits_for_payload),
-            ));
-        }
-
-        let payload_len_arr: [u8; 4] = extracted_bytes_buffer[1..5].try_into()
-            .map_err(|_| CryptoImageError::Steganography("Failed to convert extracted payload length bytes.".to_string()))?;
-        let payload_len = u32::from_be_bytes(payload_len_arr) as usize;
-        
-        println!("Header extracted: LSBs for payload = {}, Payload length = {}. Attempting to extract payload...", lsb_bits_for_payload, payload_len);
-
-        let mut all_extracted_data_bytes = Vec::new();
-        current_reconstructed_byte = 0;
-        bits_in_current_byte = 0;
-        bytes_extracted_count = 0;
-
-        let mut lsb_config_for_payload_opt: Option<u8> = None;
-        let mut actual_payload_len_opt: Option<usize> = None;
-        let mut extracting_header_stage = true;
-        
-        'full_extraction_loop: for y_img in 0..height {
-            for x_img in 0..width {
-                let pixel_channels_val = carrier_image.get_pixel(x_img, y_img).0;
-                for &channel_val_pix in pixel_channels_val.iter().take(3) {
-                    let lsb_to_use_now = if extracting_header_stage {
-                        lsb_bits_for_header
-                    } else {
-                        lsb_config_for_payload_opt.unwrap_or(1)
-                    };
-
-                    for bit_k_idx in 0..lsb_to_use_now {
-                        let current_extracted_bit = (channel_val_pix >> bit_k_idx) & 1;
-                        current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
-                        bits_in_current_byte += 1;
-
-                        if bits_in_current_byte == 8 {
-                            all_extracted_data_bytes.push(current_reconstructed_byte);
-                            bytes_extracted_count += 1;
-                            current_reconstructed_byte = 0;
-                            bits_in_current_byte = 0;
-
-                            if extracting_header_stage && bytes_extracted_count == header_len_bytes {
-                                let lsb_val = all_extracted_data_bytes[0];
-                                if !((1..=4).contains(&lsb_val) || lsb_val == 8) {
-                                     return Err(CryptoImageError::Steganography(
-                                        format!("Invalid LSB/embedding config in header: {} (must be 1-4 or 8)", lsb_val)));
-                                }
-                                lsb_config_for_payload_opt = Some(lsb_val);
-
-                                let len_arr_payload: [u8; 4] = all_extracted_data_bytes[1..5].try_into().unwrap();
-                                actual_payload_len_opt = Some(u32::from_be_bytes(len_arr_payload) as usize);
-                                
-                                println!("Steg Header Decoded: LSBs for payload: {}, Payload length: {}", lsb_val, actual_payload_len_opt.unwrap());
-
-                                extracting_header_stage = false;
-                                bytes_extracted_count = 0;
-                                all_extracted_data_bytes.clear();
-
-                                if actual_payload_len_opt.unwrap() == 0 {
-                                    break 'full_extraction_loop;
-                                }
-                            } else if !extracting_header_stage &&
-                                      actual_payload_len_opt == Some(bytes_extracted_count)
-                            {
-                                break 'full_extraction_loop;
-                            }
-                        }
-                    }
-                    if !extracting_header_stage &&
-                       actual_payload_len_opt.is_some_and(|len_val|
-                           bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0)
-                       )
-                    {
-                        break 'full_extraction_loop;
-                    }
-                }
-                if !extracting_header_stage &&
-                   actual_payload_len_opt.is_some_and(|len_val|
-                       bytes_extracted_count == len_val && (bytes_extracted_count > 0 || len_val == 0)
-                   )
-                {
-                    break 'full_extraction_loop;
-                }
-            }
-        }
-
-        if extracting_header_stage || lsb_config_for_payload_opt.is_none() || actual_payload_len_opt.is_none() {
-            return Err(CryptoImageError::Steganography(
-                "Failed to extract steganography header or determine payload parameters.".to_string(),
-            ));
-        }
-        
-        let final_payload_len = actual_payload_len_opt.unwrap();
-        if all_extracted_data_bytes.len() < final_payload_len {
-             return Err(CryptoImageError::Steganography(
-                format!("Steganography PNG data incomplete. Expected {} payload bytes, extracted {}.", final_payload_len, all_extracted_data_bytes.len()),
-            ));
-        }
-        
-        encrypted_file_data_payload = all_extracted_data_bytes;
-        println!("Decrypting from Steganography PNG file (LSB {}): {:?}", lsb_config_for_payload_opt.unwrap(), input_encrypted_path);
-
-    } else {
-        return Err(CryptoImageError::InvalidParameter(
-            format!("Unsupported input file type for decryption: .{}", input_extension)
-        ));
-    }
+    // Extract the payload
+    let encrypted_file_data_payload = extract_payload_from_carrier(input_encrypted_path, &input_extension)?;
 
     if encrypted_file_data_payload.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
         return Err(CryptoImageError::Decryption("Extracted encrypted data is too short".to_string()));
