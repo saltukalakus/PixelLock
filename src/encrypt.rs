@@ -30,7 +30,7 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
 ) -> Result<RgbImage, CryptoImageError> {
     if let Some(base_path_ref) = base_image_path_opt {
         let base_path = base_path_ref.as_ref();
-        if !base_path.exists() {
+        if (!base_path.exists()) {
             return Err(CryptoImageError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Base image not found: {:?}", base_path),
@@ -48,34 +48,47 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
 
         if base_pixels_capacity >= pixels_needed {
             Ok(base_rgb_image)
-        } else {
-            let mut new_width = base_width;
-            let mut new_height = base_height;
-            // Ensure dimensions are not zero before starting tiling calculation
-            if new_width == 0 || new_height == 0 {
-                 // If base image was 0x0, calculate new dimensions as if generating a new image
-                new_width = (pixels_needed as f64).sqrt().ceil() as u32;
-                new_height = (pixels_needed as u32).div_ceil(new_width);
-                if new_width == 0 { new_width = 1; } // Ensure at least 1x1
-                if new_height == 0 { new_height = 1; }
+        } else { // base_pixels_capacity < pixels_needed, need to tile or create larger
+            let final_tiled_width: u32;
+            let final_tiled_height: u32;
+
+            if base_width == 0 || base_height == 0 {
+                // Base image is 0x0 or invalid, treat as generating a new image for sizing
+                let mut calc_width = (pixels_needed as f64).sqrt().ceil() as u32;
+                calc_width = calc_width.max(1); // Ensure at least 1
+                let mut calc_height = (pixels_needed as u32).div_ceil(calc_width);
+                calc_height = calc_height.max(1); // Ensure at least 1
+                final_tiled_width = calc_width;
+                final_tiled_height = calc_height;
             } else {
-                // Tile existing base image
-                while ((new_width * new_height) as usize) < pixels_needed {
-                    new_width *= 2;
-                    new_height *= 2;
+                // Base image has dimensions, calculate tiles needed more precisely
+                let mut num_tiles_x = 1u32;
+                let mut num_tiles_y = 1u32;
+                // Loop until capacity is sufficient
+                while ((base_width * num_tiles_x * base_height * num_tiles_y) as usize) < pixels_needed {
+                    // Alternate growing width and height tiles, prioritizing the smaller current tiled dimension
+                    if base_width * num_tiles_x <= base_height * num_tiles_y {
+                        num_tiles_x += 1;
+                    } else {
+                        num_tiles_y += 1;
+                    }
                 }
+                final_tiled_width = base_width * num_tiles_x;
+                final_tiled_height = base_height * num_tiles_y;
             }
             
-            let mut tiled_image = RgbImage::new(new_width, new_height);
-            if base_width > 0 && base_height > 0 { // Check again in case base was 0x0 and new_width/height were set
-                for y_tiled in 0..new_height {
-                    for x_tiled in 0..new_width {
+            let mut tiled_image = RgbImage::new(final_tiled_width, final_tiled_height);
+            if base_width > 0 && base_height > 0 {
+                // Tile the original base image content
+                for y_tiled in 0..final_tiled_height {
+                    for x_tiled in 0..final_tiled_width {
                         let orig_x = x_tiled % base_width;
                         let orig_y = y_tiled % base_height;
                         tiled_image.put_pixel(x_tiled, y_tiled, *base_rgb_image.get_pixel(orig_x, orig_y));
                     }
                 }
-            } else { // Fill with random if base was 0x0 or couldn't be tiled
+            } else {
+                // Base image was 0x0, fill the new image with random pixels
                 for pixel in tiled_image.pixels_mut() {
                     *pixel = image::Rgb([random::<u8>(), random::<u8>(), random::<u8>()]);
                 }
@@ -84,10 +97,10 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
         }
     } else {
         // No base image provided, generate a new one.
-        let width = (pixels_needed as f64).sqrt().ceil() as u32;
+        let mut width = (pixels_needed as f64).sqrt().ceil() as u32;
+        width = width.max(1); // Ensure at least 1x1
         let mut height = (pixels_needed as u32).div_ceil(width);
-        if width == 0 { return Err(CryptoImageError::InvalidParameter("Calculated width is zero for new image".into())); }
-        if height == 0 { height = 1; } // Ensure at least 1 pixel high.
+        height = height.max(1); // Ensure at least 1x1
 
         let mut new_image = RgbImage::new(width, height);
         for pixel_val in new_image.pixels_mut() {
@@ -184,12 +197,16 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         let mut carrier_image = prepare_carrier_image(base_image_path_opt, pixels_needed)?;
         
         let (img_width, img_height) = carrier_image.dimensions();
+        
+        // Calculate current capacity for clarity and to help the parser.
+        let current_carrier_capacity = (img_width as usize) * (img_height as usize);
+
         // Ensure the prepared carrier image is actually large enough.
         // This is a safeguard, as prepare_carrier_image should handle sizing.
-        if (img_width as usize * img_height as usize) < pixels_needed {
+        if current_carrier_capacity < pixels_needed {
             return Err(CryptoImageError::Steganography(
                 format!("Prepared carrier image is too small. Needed {} pixels, got {}x{} ({} pixels).", 
-                        pixels_needed, img_width, img_height, img_width as usize * img_height as usize)
+                        pixels_needed, img_width, img_height, current_carrier_capacity) // Use the new variable here
             ));
         }
 
