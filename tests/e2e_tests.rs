@@ -10,18 +10,24 @@ const TEST_PASSWORD: &str = "TestPassword123!@#$"; // Meets complexity requireme
 
 const PERSISTENT_TMP_DIR_BASE: &str = "./tests/tmp";
 
-struct TestImage {
+struct TestFiles {
     name: &'static str,
     extension: &'static str,
 }
 
-const TEST_IMAGES: &[TestImage] = &[
-    TestImage { name: "test_image", extension: "jpeg" },
-    TestImage { name: "test_image", extension: "png" },
-    TestImage { name: "test_image", extension: "bmp" },
-    TestImage { name: "test_image", extension: "gif" },
-    TestImage { name: "test_image", extension: "tiff" },
-    TestImage { name: "test_image", extension: "webp" },
+const TEST_FILES: &[TestFiles] = &[
+    TestFiles { name: "test_image", extension: "jpeg" },
+    TestFiles { name: "test_image", extension: "png" },
+    TestFiles { name: "test_image", extension: "bmp" },
+    TestFiles { name: "test_image", extension: "gif" },
+    TestFiles { name: "test_image", extension: "tiff" },
+    TestFiles { name: "test_image", extension: "webp" },
+    TestFiles { name: "test_html", extension: "html" },
+    TestFiles { name: "test_csv", extension: "csv" },
+    TestFiles { name: "test_ods", extension: "ods" },
+    TestFiles { name: "test_pdf", extension: "pdf" },
+    TestFiles { name: "test_xlsx", extension: "xlsx" },
+    TestFiles { name: "test_zip", extension: "zip" },
 ];
 
 fn run_pixel_lock(args: &[String]) -> Result<Output, std::io::Error> {
@@ -81,8 +87,8 @@ fn setup_test_environment(path_parts: &[&str]) -> PathBuf {
     specific_test_tmp_dir
 }
 
-fn get_test_image_path(image: &TestImage) -> PathBuf {
-    PathBuf::from(TEST_IMAGES_DIR).join(format!("{}.{}", image.name, image.extension))
+fn get_test_file_path(file_spec: &TestFiles) -> PathBuf {
+    PathBuf::from(TEST_IMAGES_DIR).join(format!("{}.{}", file_spec.name, file_spec.extension))
 }
 
 fn get_base_image_path() -> PathBuf {
@@ -92,27 +98,27 @@ fn get_base_image_path() -> PathBuf {
 // --- Single File Tests ---
 #[test]
 fn test_single_file_txt_format() {
-    for image_spec in TEST_IMAGES {
-        let original_image_path = get_test_image_path(image_spec);
-        if !original_image_path.exists() {
-            eprintln!("Skipping test for {:?}: Original image not found.", original_image_path);
+    for file_spec in TEST_FILES {
+        let original_file_path = get_test_file_path(file_spec);
+        if !original_file_path.exists() {
+            eprintln!("Skipping test for {:?}: Original file not found.", original_file_path);
             continue;
         }
 
-        let temp_dir_path = setup_test_environment(&["test_single_file_txt_format", image_spec.extension]);
+        let temp_dir_path = setup_test_environment(&["test_single_file_txt_format", file_spec.extension]);
         let encrypted_output_base = temp_dir_path.join("encrypted_single_txt");
         let decrypted_output_base = temp_dir_path.join("decrypted_single_txt"); // Base name for decrypted output
 
         // Encrypt
         let encrypt_args = vec![
             "-e".to_string(),
-            "-i".to_string(), original_image_path.to_str().unwrap().to_string(),
+            "-i".to_string(), original_file_path.to_str().unwrap().to_string(),
             "-o".to_string(), encrypted_output_base.to_str().unwrap().to_string(),
             "-f".to_string(), "txt".to_string(),
             "-p".to_string(), TEST_PASSWORD.to_string(),
         ];
         let output_enc = run_pixel_lock(&encrypt_args).expect("Encryption failed");
-        assert!(output_enc.status.success(), "Encryption failed for {:?}: STDOUT: {}, STDERR: {}", original_image_path, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
+        assert!(output_enc.status.success(), "Encryption failed for {:?}: STDOUT: {}, STDERR: {}", original_file_path, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
         
         let encrypted_file_path = encrypted_output_base.with_extension("txt");
         assert!(encrypted_file_path.exists(), "Encrypted file {:?} not found", encrypted_file_path);
@@ -127,7 +133,7 @@ fn test_single_file_txt_format() {
         let output_dec = run_pixel_lock(&decrypt_args).expect("Decryption process failed to start");
         
         // --- BEGIN ADDED DEBUGGING ---
-        println!("\n--- Debugging test_single_file_txt_format for original: {:?} ---", original_image_path);
+        println!("\n--- Debugging test_single_file_txt_format for original: {:?} ---", original_file_path);
         println!("Encrypted file path: {:?}", encrypted_file_path);
         println!("Decrypted output base path (argument to -o): {:?}", decrypted_output_base);
         println!("Decrypt STDOUT:\n{}", String::from_utf8_lossy(&output_dec.stdout));
@@ -155,7 +161,7 @@ fn test_single_file_txt_format() {
         assert!(output_dec.status.success(), "Decryption process failed for {:?}: STDOUT: {}, STDERR: {}", encrypted_file_path, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
 
         // Determine actual decrypted file path
-        let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(image_spec.extension);
+        let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(file_spec.extension);
         let actual_decrypted_path = if expected_decrypted_path_with_ext.exists() {
             expected_decrypted_path_with_ext
         } else if decrypted_output_base.exists() { // Check base path if extension wasn't added
@@ -163,32 +169,32 @@ fn test_single_file_txt_format() {
         } else {
             panic!("Neither expected decrypted file {:?} nor base path {:?} found after TXT decryption.", expected_decrypted_path_with_ext, decrypted_output_base);
         };
-        assert!(compare_files(&original_image_path, &actual_decrypted_path), "Files differ after TXT encrypt/decrypt for {:?}", original_image_path);
+        assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after TXT encrypt/decrypt for {:?}", original_file_path);
     }
 }
 
 #[test]
 fn test_single_file_png_no_base() {
-    for image_spec in TEST_IMAGES {
-        let original_image_path = get_test_image_path(image_spec);
-         if !original_image_path.exists() {
-            eprintln!("Skipping test for {:?}: Original image not found.", original_image_path);
+    for file_spec in TEST_FILES {
+        let original_file_path = get_test_file_path(file_spec);
+         if !original_file_path.exists() {
+            eprintln!("Skipping test for {:?}: Original file not found.", original_file_path);
             continue;
         }
-        let temp_dir_path = setup_test_environment(&["test_single_file_png_no_base", image_spec.extension]);
+        let temp_dir_path = setup_test_environment(&["test_single_file_png_no_base", file_spec.extension]);
         let encrypted_output_base = temp_dir_path.join("encrypted_single_png_no_base");
         let decrypted_output_base = temp_dir_path.join("decrypted_single_png_no_base");
 
         // Encrypt
         let encrypt_args = vec![
             "-e".to_string(),
-            "-i".to_string(), original_image_path.to_str().unwrap().to_string(),
+            "-i".to_string(), original_file_path.to_str().unwrap().to_string(),
             "-o".to_string(), encrypted_output_base.to_str().unwrap().to_string(),
             "-f".to_string(), "png".to_string(),
             "-p".to_string(), TEST_PASSWORD.to_string(),
         ];
         let output_enc = run_pixel_lock(&encrypt_args).expect("Encryption failed");
-        assert!(output_enc.status.success(), "Encryption failed for {:?} (PNG no base): STDOUT: {}, STDERR: {}", original_image_path, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
+        assert!(output_enc.status.success(), "Encryption failed for {:?} (PNG no base): STDOUT: {}, STDERR: {}", original_file_path, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
         
         let encrypted_file_path = encrypted_output_base.with_extension("png");
         assert!(encrypted_file_path.exists());
@@ -204,7 +210,7 @@ fn test_single_file_png_no_base() {
         assert!(output_dec.status.success(), "Decryption failed for {:?} (PNG no base): STDOUT: {}, STDERR: {}", encrypted_file_path, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
 
         // Determine actual decrypted file path
-        let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(image_spec.extension);
+        let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(file_spec.extension);
         let actual_decrypted_path = if expected_decrypted_path_with_ext.exists() {
             expected_decrypted_path_with_ext
         } else if decrypted_output_base.exists() {
@@ -212,21 +218,21 @@ fn test_single_file_png_no_base() {
         } else {
             panic!("Neither expected decrypted file {:?} nor base path {:?} found after PNG (no base) decryption.", expected_decrypted_path_with_ext, decrypted_output_base);
         };
-        assert!(compare_files(&original_image_path, &actual_decrypted_path), "Files differ after PNG (no base) encrypt/decrypt for {:?}", original_image_path);
+        assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after PNG (no base) encrypt/decrypt for {:?}", original_file_path);
     }
 }
 
 #[test]
 fn test_single_file_png_with_base_ratios() {
     let base_image_path = get_base_image_path();
-    if !base_image_path.exists() {
+    if (!base_image_path.exists()) {
         panic!("Base image {:?} not found. Cannot run steganography tests. Ensure your test_image.* files are small to prevent timeouts.", base_image_path);
     }
 
-    for image_spec in TEST_IMAGES {
-        let original_image_path = get_test_image_path(image_spec);
-        if !original_image_path.exists() {
-            eprintln!("Skipping test for {:?} (ratio loop): Original image not found.", original_image_path);
+    for file_spec in TEST_FILES {
+        let original_file_path = get_test_file_path(file_spec);
+        if (!original_file_path.exists()) {
+            eprintln!("Skipping test for {:?} (ratio loop): Original file not found.", original_file_path);
             continue;
         }
 
@@ -234,7 +240,7 @@ fn test_single_file_png_with_base_ratios() {
             let ratio_str = format!("ratio{}", ratio);
             let temp_dir_path = setup_test_environment(&[
                 "test_single_file_png_with_base_ratios", 
-                image_spec.extension, 
+                file_spec.extension, 
                 &ratio_str
             ]);
             let encrypted_output_base = temp_dir_path.join(format!("encrypted_single_png_base_r{}", ratio));
@@ -243,7 +249,7 @@ fn test_single_file_png_with_base_ratios() {
             // Encrypt
             let encrypt_args = vec![
                 "-e".to_string(),
-                "-i".to_string(), original_image_path.to_str().unwrap().to_string(),
+                "-i".to_string(), original_file_path.to_str().unwrap().to_string(),
                 "-o".to_string(), encrypted_output_base.to_str().unwrap().to_string(),
                 "-f".to_string(), "png".to_string(),
                 "-b".to_string(), base_image_path.to_str().unwrap().to_string(),
@@ -251,7 +257,7 @@ fn test_single_file_png_with_base_ratios() {
                 "-p".to_string(), TEST_PASSWORD.to_string(),
             ];
             let output_enc = run_pixel_lock(&encrypt_args).expect("Encryption failed");
-            assert!(output_enc.status.success(), "Encryption failed for {:?} (PNG base, ratio {}): STDOUT: {}, STDERR: {}", original_image_path, ratio, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
+            assert!(output_enc.status.success(), "Encryption failed for {:?} (PNG base, ratio {}): STDOUT: {}, STDERR: {}", original_file_path, ratio, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
             
             let encrypted_file_path = encrypted_output_base.with_extension("png");
             assert!(encrypted_file_path.exists());
@@ -267,7 +273,7 @@ fn test_single_file_png_with_base_ratios() {
             assert!(output_dec.status.success(), "Decryption failed for {:?} (PNG base, ratio {}): STDOUT: {}, STDERR: {}", encrypted_file_path, ratio, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
 
             // Determine actual decrypted file path
-            let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(image_spec.extension);
+            let expected_decrypted_path_with_ext = decrypted_output_base.with_extension(file_spec.extension);
             let actual_decrypted_path = if expected_decrypted_path_with_ext.exists() {
                 expected_decrypted_path_with_ext
             } else if decrypted_output_base.exists() {
@@ -275,7 +281,7 @@ fn test_single_file_png_with_base_ratios() {
             } else {
                 panic!("Neither expected decrypted file {:?} nor base path {:?} found after PNG (base, ratio {}) decryption.", expected_decrypted_path_with_ext, decrypted_output_base, ratio);
             };
-            assert!(compare_files(&original_image_path, &actual_decrypted_path), "Files differ after PNG (base, ratio {}) encrypt/decrypt for {:?}", ratio, original_image_path);
+            assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after PNG (base, ratio {}) encrypt/decrypt for {:?}", ratio, original_file_path);
         }
     }
 }
@@ -352,14 +358,14 @@ fn test_folder_mode_generic(
     assert!(output_dec.status.success(), "Folder decryption process failed (format: {}, base: {:?}, ratio: {:?}): STDOUT: {}, STDERR: {}", format_str, base_image_opt.is_some(), ratio_opt, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
 
     // Verify decrypted files
-    for image_spec in TEST_IMAGES {
-        let original_image_path = get_test_image_path(image_spec);
-        if !original_image_path.exists() { // Skip if original doesn't exist
-             eprintln!("Skipping verification for {:?}: Original image not found.", original_image_path);
+    for file_spec in TEST_FILES {
+        let original_file_path = get_test_file_path(file_spec);
+        if !original_file_path.exists() { // Skip if original doesn't exist
+             eprintln!("Skipping verification for {:?}: Original file not found.", original_file_path);
             continue;
         }
         
-        let original_file_basename = format!("{}.{}", image_spec.name, image_spec.extension);
+        let original_file_basename = format!("{}.{}", file_spec.name, file_spec.extension);
         
         // PixelLock's folder decryption saves files with their original names + detected extensions.
         // Example: If original was "test_image.jpeg", and it was encrypted (e.g. to "test_image.jpeg.txt" 
@@ -380,7 +386,7 @@ fn test_folder_mode_generic(
                    actual_decrypted_path, original_file_basename);
         };
         
-        assert!(compare_files(&original_image_path, &actual_decrypted_path), "Files differ after folder encrypt/decrypt for {:?} (format: {}, base: {:?}, ratio: {:?})", original_image_path, format_str, base_image_opt.is_some(), ratio_opt);
+        assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after folder encrypt/decrypt for {:?} (format: {}, base: {:?}, ratio: {:?})", original_file_path, format_str, base_image_opt.is_some(), ratio_opt);
     }
 }
 

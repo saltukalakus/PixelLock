@@ -106,8 +106,8 @@ fn build_cli_command() -> Command {
     Command::new("PixelLock")
         .version(APP_VERSION_STR) // Use const for version
         .author("Saltuk Alakus")
-        .about("\nPixelLock is a command-line tool to secure your pictures with military-grade encryption. 
-                \nIt helps enhance privacy and provide an additional layer of security while storing images.")
+        .about("\nPixelLock is a command-line tool to secure your files (images and other types) with military-grade encryption. 
+                \nIt helps enhance privacy and provide an additional layer of security while storing files.")
         // Mode arguments: encrypt or decrypt.
         .arg(
             Arg::new("decrypt")
@@ -286,19 +286,19 @@ fn main() {
         // Input is a single file.
         validate_file_exists(input_arg_str); // Ensure input file exists.
         if is_encrypt {
-            match encrypt::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption, app_version_bytes) {
-                Ok(_original_format) => { /* Success message printed by encrypt_image */ } 
+            match encrypt::encrypt_file(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption, app_version_bytes) {
+                Ok(_original_format) => { /* Success message printed by encrypt_file */ } 
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);
                     std::process::exit(1); // Exit on error for single file mode
                 }
             }
         } else if is_decrypt {
-            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret, app_version_bytes) {
+            if let Err(e) = decrypt::decrypt_file(input_arg_str, output_arg_str, &encryption_secret, app_version_bytes) {
                 eprintln!("Error decrypting file: {}", e);
                 std::process::exit(1); // Exit on error for single file mode
             }
-            // Success message is printed by decrypt_image
+            // Success message is printed by decrypt_file
         }
     }
 }

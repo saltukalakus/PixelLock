@@ -14,6 +14,7 @@ use crate::secret::{derive_encryption_key_with_salt};
 pub const VERSION_INFO_LEN: usize = 3; // Major, Minor, Patch
 pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; 
+pub const EXT_LEN_FIELD_LEN: usize = 1; // Length of the extension string's length field
 
 /// Configuration for the core encryption logic.
 pub struct EncryptionCoreConfig<'a, P: AsRef<Path> + std::fmt::Debug> {
@@ -125,7 +126,7 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
 
 /// Core encryption logic using a pre-derived key and salt.
 /// This function is intended for use when the key and salt are managed externally (e.g., folder mode).
-pub fn encrypt_image_core<P1, P2, P3>(
+pub fn encrypt_file_core<P1, P2, P3>(
     input_image_path: P1,
     output_encrypted_path_param: P2,
     derived_key: &[u8; 32], // Accepts pre-derived key
@@ -137,11 +138,11 @@ where
     P2: AsRef<Path> + std::fmt::Debug,
     P3: AsRef<Path> + std::fmt::Debug,
 {
-    let original_format_str = input_image_path
+    let original_extension_str = input_image_path
         .as_ref()
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or("png")
+        .unwrap_or("") // Default to empty string if no extension
         .to_lowercase();
 
     let img_bytes = fs::read(&input_image_path)?;
@@ -154,14 +155,24 @@ where
     let encrypted_data_core = cipher.encrypt(nonce, img_bytes.as_ref())
         .map_err(|_| CryptoImageError::Encryption("AEAD encryption failed".to_string()))?;
 
-    let salt_bytes_to_store = salt_for_payload.as_str().as_bytes(); // Use the provided salt
+    let salt_bytes_to_store = salt_for_payload.as_str().as_bytes(); 
     assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Provided salt string length does not match expected SALT_STRING_LEN.");
+
+    let mut extension_bytes_to_store = original_extension_str.as_bytes().to_vec();
+    if extension_bytes_to_store.len() > 255 { // Max length for a u8 field
+        // Truncate or handle error - for now, truncate and log warning
+        eprintln!("Warning: Original file extension longer than 255 bytes, truncating: {}", original_extension_str);
+        extension_bytes_to_store.truncate(255);
+    }
+    let ext_len_byte = extension_bytes_to_store.len() as u8;
 
     let mut raw_output_payload = Vec::new();
     raw_output_payload.push(config.app_version.0); // Major
     raw_output_payload.push(config.app_version.1); // Minor
     raw_output_payload.push(config.app_version.2); // Patch
     raw_output_payload.extend_from_slice(salt_bytes_to_store);
+    raw_output_payload.push(ext_len_byte); // Store length of the extension
+    raw_output_payload.extend_from_slice(&extension_bytes_to_store); // Store the extension itself
     raw_output_payload.extend_from_slice(&nonce_bytes);
     raw_output_payload.extend_from_slice(&encrypted_data_core);
     
@@ -305,12 +316,12 @@ where
         return Err(CryptoImageError::InvalidParameter(format!("Unsupported output format: {}", config.output_format_preference)));
     }
 
-    Ok(original_format_str)
+    Ok(original_extension_str) // Return the original extension (as string)
 }
 
 /// Encrypts an image file using AES-256-GCM. Derives key and salt internally.
 /// This is the standard entry point for single-file encryption.
-pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
+pub fn encrypt_file<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
     input_image_path: P1,
     output_encrypted_path_param: P2,
     secret: &Zeroizing<String>, // Takes the raw secret
@@ -332,7 +343,7 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     };
 
     // Call the core encryption logic with the derived key and new salt.
-    encrypt_image_core(
+    encrypt_file_core(
         input_image_path,
         output_encrypted_path_param,
         &derived_key,
@@ -382,7 +393,7 @@ pub fn process_folder_encryption(
         Ok(entries) => {
             let mut files_processed_successfully = 0;
             let mut files_failed_to_process = 0;
-            let mut files_skipped_extension = 0;
+            let mut files_skipped_extension = 0; // This counter might become less relevant
             println!("\nStarting folder encryption...");
 
             for entry_result in entries {
@@ -393,17 +404,9 @@ pub fn process_folder_encryption(
                             // Skip hidden files (e.g., .DS_Store) robustly
                             if let Some(name_os_str) = current_input_file_path.file_name() {
                                 if name_os_str.to_string_lossy().starts_with('.') {
+                                    files_skipped_extension +=1; // Count skipped hidden files
                                     continue; // Silently skip hidden files
                                 }
-                            }
-
-                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                            let lower_extension = extension.to_lowercase();
-                            let supported_encryption_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
-                            
-                            if !supported_encryption_extensions.contains(&lower_extension.as_str()) {
-                                files_skipped_extension += 1;
-                                continue;
                             }
 
                             let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
@@ -426,7 +429,7 @@ pub fn process_folder_encryption(
                                 app_version,
                             };
 
-                            match encrypt_image_core(
+                            match encrypt_file_core(
                                 &current_input_file_path,
                                 &current_output_file_path_base,
                                 &derived_key, // Use the key derived above
@@ -454,7 +457,7 @@ pub fn process_folder_encryption(
             println!("  Files successfully encrypted: {}", files_processed_successfully);
             println!("  Files failed to encrypt: {}", files_failed_to_process);
             if files_skipped_extension > 0 {
-                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
+                println!("  Files skipped (e.g. hidden or previously filtered): {}", files_skipped_extension);
             }
         }
         Err(e) => {
@@ -472,7 +475,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use zeroize::Zeroizing;
-    use crate::decrypt::decrypt_image; 
+    use crate::decrypt::decrypt_file; 
     use crate::error_types::CryptoImageError;
     use image::{RgbImage, ImageFormat, GenericImageView};
 
@@ -572,11 +575,11 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_round_trip_txt() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempdir()?;
-        let input_image_path = temp_dir.path().join("test_input.dat");
+        let input_image_path = temp_dir.path().join("test_input.dat"); // Changed to .dat to test generic extension
         let encrypted_path = temp_dir.path().join("test_encrypted");
-        let decrypted_path = temp_dir.path().join("test_decrypted");
+        let decrypted_path_base = temp_dir.path().join("test_decrypted"); // Base for decrypted output
 
-        let original_data = b"This is some test image data for TXT format.";
+        let original_data = b"This is some test image data for TXT format with a .dat extension.";
         fs::write(&input_image_path, original_data)?;
 
         let secret = Zeroizing::new("supersecretpassword123!@#".to_string());
@@ -584,7 +587,7 @@ mod tests {
         let lsb_bits: u8 = 1;
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
-        encrypt_image(
+        encrypt_file(
             &input_image_path,
             &encrypted_path,
             &secret,
@@ -597,14 +600,17 @@ mod tests {
         let encrypted_file_with_ext = encrypted_path.with_extension("txt");
         assert!(encrypted_file_with_ext.exists(), "Encrypted TXT file should exist.");
 
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
-            &decrypted_path,
+            &decrypted_path_base, // Pass base path
             &secret,
             app_version_for_test,
         )?;
         
-        let decrypted_data_content = fs::read(&decrypted_path)?;
+        // Decrypted file should now be test_decrypted.dat
+        let decrypted_file_with_original_ext = decrypted_path_base.with_extension("dat");
+        assert!(decrypted_file_with_original_ext.exists(), "Decrypted file with original extension .dat should exist.");
+        let decrypted_data_content = fs::read(&decrypted_file_with_original_ext)?;
         assert_eq!(original_data.to_vec(), decrypted_data_content, "Decrypted data should match original for TXT format.");
 
         temp_dir.close()?;
@@ -628,7 +634,7 @@ mod tests {
         let lsb_bits: u8 = 2;
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
-        let original_input_format = encrypt_image(
+        let original_input_format = encrypt_file(
             &input_image_path,
             &encrypted_path_base,
             &secret,
@@ -642,7 +648,7 @@ mod tests {
         let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
         assert!(encrypted_file_with_ext.exists(), "Encrypted steganographic PNG file should exist.");
 
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
@@ -661,7 +667,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_round_trip_png_with_base() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempdir()?;
-        let input_image_path = temp_dir.path().join("test_input_for_steg_base.dat");
+        let input_image_path = temp_dir.path().join("test_input_for_steg_base.any"); // Test with a generic extension
         let base_image_path = temp_dir.path().join("base_carrier.png");
         let encrypted_path_base = temp_dir.path().join("test_encrypted_steg_w_base");
         let decrypted_path_base = temp_dir.path().join("test_decrypted_steg_w_base");
@@ -676,7 +682,7 @@ mod tests {
         let lsb_bits: u8 = 3;
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
-        encrypt_image(
+        encrypt_file(
             &input_image_path,
             &encrypted_path_base,
             &secret,
@@ -689,15 +695,17 @@ mod tests {
         let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
         assert!(encrypted_file_with_ext.exists(), "Encrypted steganographic PNG file (with base) should exist.");
 
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
-            &decrypted_path_base,
+            &decrypted_path_base, // Pass base path
             &secret,
             app_version_for_test,
         )?;
         
-        assert!(decrypted_path_base.exists(), "Decrypted file (with base) should exist.");
-        let decrypted_data_content = fs::read(&decrypted_path_base)?;
+        // Decrypted file should now be test_decrypted_steg_w_base.any
+        let decrypted_file_with_original_ext = decrypted_path_base.with_extension("any");
+        assert!(decrypted_file_with_original_ext.exists(), "Decrypted file with original extension .any should exist.");
+        let decrypted_data_content = fs::read(&decrypted_file_with_original_ext)?;
         assert_eq!(data_to_encrypt.to_vec(), decrypted_data_content, "Decrypted data should match original for steganographic PNG (with base).");
 
         temp_dir.close()?;
@@ -707,7 +715,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_empty_file_txt() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempdir()?;
-        let input_file_path = temp_dir.path().join("empty_input.dat");
+        let input_file_path = temp_dir.path().join("empty_input.nodata"); // Test with a generic extension
         let encrypted_path_base = temp_dir.path().join("empty_encrypted_txt");
         let decrypted_path_base = temp_dir.path().join("empty_decrypted_txt");
 
@@ -718,7 +726,7 @@ mod tests {
         let lsb_bits = 1; // Not used for txt
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
-        encrypt_image(
+        encrypt_file(
             &input_file_path,
             &encrypted_path_base,
             &secret,
@@ -731,16 +739,17 @@ mod tests {
         let encrypted_file_with_ext = encrypted_path_base.with_extension("txt");
         assert!(encrypted_file_with_ext.exists());
 
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
-            &decrypted_path_base,
+            &decrypted_path_base, // Pass base path
             &secret,
             app_version_for_test,
         )?;
         
-        // For empty file, decrypted output path might not have an extension if detect_file_format returns None
-        // So we read the base path directly.
-        let decrypted_data = fs::read(&decrypted_path_base)?;
+        // Decrypted file should be empty_decrypted_txt.nodata
+        let decrypted_file_with_original_ext = decrypted_path_base.with_extension("nodata");
+        assert!(decrypted_file_with_original_ext.exists(), "Decrypted file with original extension .nodata should exist.");
+        let decrypted_data = fs::read(&decrypted_file_with_original_ext)?;
         assert_eq!(decrypted_data, b"", "Decrypted data for empty file should be empty.");
 
         temp_dir.close()?;
@@ -750,7 +759,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_empty_file_png_no_base() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempdir()?;
-        let input_file_path = temp_dir.path().join("empty_input_for_png.dat"); // Can be any extension for content
+        let input_file_path = temp_dir.path().join("empty_input_for_png.bin"); // Test with a generic extension
         let encrypted_path_base = temp_dir.path().join("empty_encrypted_png");
         let decrypted_path_base = temp_dir.path().join("empty_decrypted_png");
 
@@ -763,7 +772,7 @@ mod tests {
         let lsb_bits_param = 8; 
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
-        encrypt_image(
+        encrypt_file(
             &input_file_path,
             &encrypted_path_base,
             &secret,
@@ -777,23 +786,26 @@ mod tests {
         assert!(encrypted_file_with_ext.exists(), "Encrypted PNG file should exist.");
 
         // Check carrier image size for empty payload (salt + nonce + 0 bytes data)
-        // Header (5 bytes) + Salt (22 bytes) + Nonce (12 bytes) = 39 bytes
+        // Header (5 bytes) + Salt (22 bytes) + ExtLen (1 byte) + Ext ("bin" -> 3 bytes) + Nonce (12 bytes) = 43 bytes.
         // Header bits = 5 * 8 = 40 bits. Pixels for header (1 LSB/channel) = ceil(40 / (3*1)) = 14 pixels
-        // Payload bits = (22+12) * 8 = 34 * 8 = 272 bits. Pixels for payload (8 LSB/channel) = ceil(272 / (3*8)) = ceil(272/24) = 12 pixels
-        // Total pixels needed = 14 + 12 = 26 pixels.
-        // prepare_carrier_image will create sqrt(26) ~ 5.09 -> 6x5 or 6x6 image (e.g. 6x5=30 pixels)
+        // Payload bits = (22+1+3+12) * 8 = 38 * 8 = 304 bits. Pixels for payload (8 LSB/channel) = ceil(304 / (3*8)) = ceil(304/24) = 13 pixels
+        // Total pixels needed = 14 + 13 = 27 pixels.
+        // prepare_carrier_image will create sqrt(27) ~ 5.19 -> 6x5 or 6x6 image (e.g. 6x5=30 pixels)
         let carrier_img = image::open(&encrypted_file_with_ext)?;
-        assert!((carrier_img.width() * carrier_img.height()) >= 26, "Carrier image for empty payload is too small.");
+        assert!((carrier_img.width() * carrier_img.height()) >= 27, "Carrier image for empty payload is too small.");
 
 
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
-            &decrypted_path_base,
+            &decrypted_path_base, // Pass base path
             &secret,
             app_version_for_test,
         )?;
         
-        let decrypted_data = fs::read(&decrypted_path_base)?;
+        // Decrypted file should be empty_decrypted_png.bin
+        let decrypted_file_with_original_ext = decrypted_path_base.with_extension("bin");
+        assert!(decrypted_file_with_original_ext.exists(), "Decrypted file with original extension .bin should exist.");
+        let decrypted_data = fs::read(&decrypted_file_with_original_ext)?;
         assert_eq!(decrypted_data, b"", "Decrypted data for empty file (PNG) should be empty.");
 
         temp_dir.close()?;
@@ -803,7 +815,7 @@ mod tests {
     #[test]
     fn test_steganography_carrier_too_small_for_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempdir()?;
-        let input_file_path = temp_dir.path().join("large_payload.dat");
+        let input_file_path = temp_dir.path().join("large_payload.dat"); // .dat extension
         let base_image_path = temp_dir.path().join("tiny_carrier.png");
         let encrypted_path_base = temp_dir.path().join("encrypted_output");
         let decrypted_path_base = temp_dir.path().join("decrypted_output_for_tiled");
@@ -821,7 +833,7 @@ mod tests {
         let app_version_for_test = (1,0,0); // Example app_version for tests
 
         // Encrypt_image should succeed by tiling the small base image.
-        let result = encrypt_image(
+        let result = encrypt_file(
             &input_file_path,
             &encrypted_path_base,
             &secret,
@@ -842,28 +854,31 @@ mod tests {
 
         // Calculate expected pixels needed to confirm sufficient tiling
         // Payload: 1000 bytes. AES-GCM tag: 16 bytes. Total encrypted: 1016 bytes.
-        // Raw output payload: salt (22) + nonce (12) + encrypted_data (1016) = 1050 bytes.
+        // Raw output payload: salt (22) + ext_len (1) + ext ("dat" -> 3) + nonce (12) + encrypted_data (1016) = 1054 bytes.
         // Header: lsb_config (1) + payload_len (4) = 5 bytes.
         // Total header bits: 5 * 8 = 40 bits. Bits per pixel for header (1 LSB/channel): 3.
         // Pixels for header: ceil(40/3) = 14.
-        // Total payload bits: 1050 * 8 = 8400 bits. Bits per pixel for payload (1 LSB/channel): 3.
-        // Pixels for payload: ceil(8400/3) = 2800.
-        // Total pixels needed: 14 + 2800 = 2814.
-        let expected_pixels_needed = 2814;
+        // Total payload bits: 1054 * 8 = 8432 bits. Bits per pixel for payload (1 LSB/channel): 3.
+        // Pixels for payload: ceil(8432/3) = 2811.
+        // Total pixels needed: 14 + 2811 = 2825.
+        let expected_pixels_needed = 2825;
         assert!((output_width as usize * output_height as usize) >= expected_pixels_needed, 
                 "Output image capacity ({}) should be >= expected_pixels_needed ({})", 
                 output_width as usize * output_height as usize, expected_pixels_needed);
 
 
         // Decrypt and verify data
-        decrypt_image(
+        decrypt_file(
             &encrypted_file_with_ext,
-            &decrypted_path_base,
+            &decrypted_path_base, // Pass base path
             &secret,
             app_version_for_test,
         )?;
 
-        let decrypted_data_content = fs::read(&decrypted_path_base)?;
+        // Decrypted file should be decrypted_output_for_tiled.dat
+        let decrypted_file_with_original_ext = decrypted_path_base.with_extension("dat");
+        assert!(decrypted_file_with_original_ext.exists(), "Decrypted file with original extension .dat should exist.");
+        let decrypted_data_content = fs::read(&decrypted_file_with_original_ext)?;
         assert_eq!(large_data, decrypted_data_content, "Decrypted data should match original after tiling.");
 
         temp_dir.close()?;

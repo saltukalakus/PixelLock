@@ -4,13 +4,15 @@
 
 ##
 
-PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images. 
+PixelLock is a command-line tool to secure your files with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing your sensitive files. 
 
-Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
+Any file can be secured with PixelLock. Most popular file formats are natively supported by file introspection. PixelLock falls back to using file extension as source of truth if the format is not recognized.
 
 The tool allows you to generate encrypted files in two different formats: Base64 text or a PNG image. 
 
-You may optionally pass a PNG formatted base image to hide your encrypted image in it if the output format is selected as PNG. When the base image is provided the tool allows configuring the blending ratio to decide the final generated picture distortion level vs the output file size.
+You may optionally pass a PNG formatted base image to hide your encrypted file in it if the output format is selected as PNG. 
+
+When the carrier base image is provided, the tool allows configuring the blending ratio to adjust the image distortion level vs the output file size. If the carrier image file size isn't sufficient the tool automatically tiles it to enlarge the base.
 
 Feel free to open any feature requests in the issues section. Please check existing open issues before opening a new one. Also don't forget to ⭐️ the project if you find it useful 🤩
 
@@ -35,19 +37,19 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 ## 🪄 Usage 🪄
 
-* Encrypting a single image, embedding it into a provided base PNG:
+* Encrypting a single file, embedding it into a provided base PNG:
 ```bash
 > PixelLock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
 # Output will be ./stego_image.png (using my_base.png as a carrier, 1 LSB)
 ```
 
-* Decrypting a steganographic PNG image to reveal the secret image:
+* Decrypting a steganographic PNG image to reveal the secret file:
 ```bash
 > PixelLock -d -i ./stego_image.png -o ./secret_image
 # Output extension will be based on detected original format, e.g., ./secret_image.jpeg
 ```
 
-* Encrypting all images in a folder, embedding them into a provided base PNG:
+* Encrypting all files in a folder, embedding them into a provided base PNG:
 ```bash
 > PixelLock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
 
@@ -55,10 +57,12 @@ Input
  ├── img-folder
      └── Image1.jpg
      └── Image2.png
+     └── doc.pdf
 Output
  ├── stego_folder
      └── Image1.jpg.png
      └── Image2.png.png
+     └── doc.pdf.png
 ```
 
 * Decrypting all steganographic PNG images in a folder to an output folder:
@@ -69,10 +73,12 @@ Input
  ├── stego_folder
      └── Image1.jpg.png
      └── Image2.png.png
+     └── doc.pdf.png
 Output
  ├── img-folder
      └── Image1.jpg
      └── Image2.png
+     └── doc.pdf
 ```
 
 *  📖 For a full list of available options, try the help command:
@@ -83,7 +89,7 @@ Output
 
 ## 🧪 Running Tests 🧪
 
-To run end-to-end tests execute the `cargo test` command in the project root director. 
+To run end-to-end tests execute the `cargo test` command in the project root directory. 
 
 ```bash
 > cargo test  

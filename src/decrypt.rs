@@ -8,7 +8,7 @@ use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
 use crate::secret::{derive_encryption_key_with_salt}; 
-use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN, VERSION_INFO_LEN};
+use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN, VERSION_INFO_LEN, EXT_LEN_FIELD_LEN};
 
 /// Processes all supported files in an input directory for decryption.
 pub fn process_folder_decryption(
@@ -65,7 +65,7 @@ pub fn process_folder_decryption(
                                    current_input_file_path,
                                    current_output_file_path_base);
 
-                            match decrypt_image(&current_input_file_path, &current_output_file_path_base, secret, app_version) { // Call local decrypt_image
+                            match decrypt_file(&current_input_file_path, &current_output_file_path_base, secret, app_version) { // Call local decrypt_file
                                 Ok(_) => {
                                     println!("Done.");
                                     files_processed_successfully += 1;
@@ -319,7 +319,7 @@ fn extract_payload_from_carrier(
 /// * `None` if the format is not recognized.
 fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
     // --- BEGIN ADDED DEBUGGING ---
-    let max_bytes_to_print = std::cmp::min(decrypted_data.len(), 16); // Print up to 16 bytes
+    let max_bytes_to_print = std::cmp::min(decrypted_data.len(), 32); // Print up to 32 bytes
     println!(
         "DEBUG detect_file_format: First {} bytes (hex): {:?}",
         max_bytes_to_print,
@@ -345,6 +345,38 @@ fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
               decrypted_data.starts_with(b"RIFF") && 
               &decrypted_data[8..12] == b"WEBP" { // WEBP
         Some("webp")
+    } else if decrypted_data.starts_with(b"%PDF-") { // PDF
+        Some("pdf")
+    } else if decrypted_data.starts_with(&[0x50, 0x4B, 0x03, 0x04]) || decrypted_data.starts_with(&[0x50, 0x4B, 0x05, 0x06]) || decrypted_data.starts_with(&[0x50, 0x4B, 0x07, 0x08]) { // ZIP (PK variants)
+        // Further checks for DOCX, XLSX, PPTX (they are ZIP files)
+        // This requires looking for specific file entries within the ZIP structure, which is complex.
+        // For simplicity, we'll identify them as "zip" for now. A more robust solution would inspect ZIP contents.
+        // A common approach for Office Open XML is to check for `[Content_Types].xml` or specific relationship parts.
+        // For now, just "zip" is a good first step.
+        Some("zip")
+        // To distinguish docx/xlsx/pptx, one would need to parse the zip and look for specific file names.
+        // Example (conceptual, not implemented here due to complexity):
+        // if is_docx_structure(decrypted_data) { return Some("docx"); }
+        // else if is_xlsx_structure(decrypted_data) { return Some("xlsx"); }
+        // else if is_pptx_structure(decrypted_data) { return Some("pptx"); }
+    } else if decrypted_data.starts_with(b"ID3") || (decrypted_data.len() > 1 && decrypted_data[0] == 0xFF && (decrypted_data[1] & 0xE0) == 0xE0) { // MP3 (ID3 tag or frame sync)
+        Some("mp3")
+    } else if decrypted_data.len() >= 12 && &decrypted_data[4..8] == b"ftyp" { // MP4 container and related (e.g. mov, m4a, m4v)
+        // Common ftyp signatures: "isom", "mp41", "mp42", "m4v ", "m4a ", "mov "
+        // For simplicity, we'll broadly classify as "mp4" if "ftyp" is present at offset 4.
+        Some("mp4")
+    } else if decrypted_data.starts_with(b"RIFF") && decrypted_data.len() >= 12 && &decrypted_data[8..12] == b"WAVE" { // WAV
+        Some("wav")
+    } else if decrypted_data.starts_with(&[0x1F, 0x8B]) { // GZIP
+        Some("gz")
+    } else if decrypted_data.len() >= 262 && &decrypted_data[257..262] == b"ustar" { // TAR
+        Some("tar")
+    } else if decrypted_data.starts_with(b"{\\rtf") { // RTF
+        Some("rtf")
+    } else if decrypted_data.starts_with(b"fLaC") { // FLAC native
+        Some("flac")
+    } else if decrypted_data.starts_with(b"OggS") { // OGG
+        Some("ogg")
     } else {
         None
     }
@@ -355,14 +387,14 @@ fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
 ///
 /// # Arguments
 /// * `input_encrypted_path_ref` - Path to the encrypted file (.txt or .png).
-/// * `output_decrypted_path_base` - Base path for the output decrypted file. The extension will be auto-detected.
+/// * `output_decrypted_path_base` - Base path for the output decrypted file. The extension will be auto-detected or taken from payload.
 /// * `secret` - The user-provided secret (password) for decryption.
 /// * `current_app_version` - The version tuple (major, minor, patch) of the currently running application.
 ///
 /// # Returns
 /// * `Ok(())` on success.
 /// * `Err(CryptoImageError)` on failure.
-pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std::fmt::Debug>(
+pub fn decrypt_file<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std::fmt::Debug>(
     input_encrypted_path_ref: PIn,
     output_decrypted_path_base: POut,
     secret: &Zeroizing<String>,
@@ -371,14 +403,15 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
     let input_extension = input_encrypted_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
-    // Extract the payload
     let encrypted_file_data_payload = extract_payload_from_carrier(input_encrypted_path, &input_extension)?;
 
-    // Check minimum length: Version (3) + Salt (22) + Nonce (12)
-    if encrypted_file_data_payload.len() < VERSION_INFO_LEN + SALT_STRING_LEN + NONCE_STRING_LEN {
+    // Check minimum length: Version (3) + Salt (22) + ExtLen (1) + Nonce (12)
+    // Extension itself can be 0 length.
+    let min_payload_len = VERSION_INFO_LEN + SALT_STRING_LEN + EXT_LEN_FIELD_LEN + NONCE_STRING_LEN;
+    if encrypted_file_data_payload.len() < min_payload_len {
         return Err(CryptoImageError::Decryption(format!(
             "Extracted encrypted data is too short. Expected at least {} bytes, got {}.",
-            VERSION_INFO_LEN + SALT_STRING_LEN + NONCE_STRING_LEN,
+            min_payload_len,
             encrypted_file_data_payload.len()
         )));
     }
@@ -387,7 +420,24 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     let stored_version = (version_bytes[0], version_bytes[1], version_bytes[2]);
 
     // Optional: Log or compare versions
-    if stored_version == current_app_version {
+    if stored_version.0 != current_app_version.0 {
+        // ANSI escape codes for red text
+        const RED: &str = "\x1b[31m";
+        const RESET: &str = "\x1b[0m";
+        let error_message = format!(
+            "{}Critical version mismatch: File encrypted with major version {}, current app major version is {}. Decryption aborted.{}",
+            RED,
+            stored_version.0,
+            current_app_version.0,
+            RESET
+        );
+        eprintln!("{}", error_message); // Print to stderr for visibility
+        return Err(CryptoImageError::Decryption(format!(
+            "File encrypted with major version {}, current app major version is {}. Cannot decrypt due to major version incompatibility.",
+            stored_version.0,
+            current_app_version.0
+        )));
+    } else if stored_version == current_app_version {
         println!(
             "File encrypted with version: {}.{}.{}. Current app version: {}.{}.{}",
             stored_version.0, stored_version.1, stored_version.2,
@@ -405,10 +455,24 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
             RESET
         );
     }
-    // TODO: Add compatibility logic based on version if needed in the future.
 
     let (salt_string_bytes, rest_after_salt) = rest_after_version.split_at(SALT_STRING_LEN);
-    let (nonce_bytes, ciphertext) = rest_after_salt.split_at(NONCE_STRING_LEN);
+    
+    // Extract ExtLen and Extension
+    let (ext_len_byte_slice, rest_after_ext_len) = rest_after_salt.split_at(EXT_LEN_FIELD_LEN);
+    let ext_len = ext_len_byte_slice[0] as usize;
+
+    if rest_after_ext_len.len() < ext_len + NONCE_STRING_LEN {
+        return Err(CryptoImageError::Decryption(format!(
+            "Encrypted data too short to contain extension (len {}) and nonce (len {}). Remaining: {}",
+            ext_len, NONCE_STRING_LEN, rest_after_ext_len.len()
+        )));
+    }
+    let (extension_bytes, rest_after_extension) = rest_after_ext_len.split_at(ext_len);
+    let stored_extension_str = std::str::from_utf8(extension_bytes)?;
+
+
+    let (nonce_bytes, ciphertext) = rest_after_extension.split_at(NONCE_STRING_LEN);
 
     let salt_str = std::str::from_utf8(salt_string_bytes)?;
     let salt = SaltString::from_b64(salt_str)?;
@@ -421,15 +485,36 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
         .map_err(|_| CryptoImageError::Decryption("AEAD decryption failed (possibly wrong secret or corrupted file)".to_string()))?;
     
     let output_decrypted_path_base_buf = PathBuf::from(output_decrypted_path_base.as_ref());
+    let mut final_output_path = output_decrypted_path_base_buf.clone(); // Default to base path
 
-    if let Some(format) = detect_file_format(&decrypted_data) {
-        let final_output_path = output_decrypted_path_base_buf.with_extension(format);
-        println!("Detected file format: {:?}. Saving decrypted file to: {:?}", format, final_output_path);
-        fs::write(&final_output_path, decrypted_data)?;
+    if let Some(detected_format) = detect_file_format(&decrypted_data) {
+        if detected_format == "zip" {
+            // If detected as zip, check if stored extension is a more specific known office format
+            match stored_extension_str.to_lowercase().as_str() {
+                "ods" | "xlsx" | "docx" | "pptx" => {
+                    final_output_path = output_decrypted_path_base_buf.with_extension(stored_extension_str);
+                    println!("Detected as ZIP, but using stored specific extension: {:?}. Saving decrypted file to: {:?}", stored_extension_str, final_output_path);
+                }
+                _ => {
+                    // It's a generic zip or some other zip-based format we don't specifically handle, so use "zip"
+                    final_output_path = output_decrypted_path_base_buf.with_extension(detected_format);
+                    println!("Detected file format: {:?}. Saving decrypted file to: {:?}", detected_format, final_output_path);
+                }
+            }
+        } else {
+            // Detected format is not "zip", so use it directly
+            final_output_path = output_decrypted_path_base_buf.with_extension(detected_format);
+            println!("Detected file format: {:?}. Saving decrypted file to: {:?}", detected_format, final_output_path);
+        }
+    } else if ext_len > 0 && !stored_extension_str.is_empty() {
+        final_output_path = output_decrypted_path_base_buf.with_extension(stored_extension_str);
+        println!("Used stored file extension: {:?}. Saving decrypted file to: {:?}", stored_extension_str, final_output_path);
     } else {
-        eprintln!("Warning: Could not detect file format. Saving decrypted data as is to: {:?}", output_decrypted_path_base_buf);
-        fs::write(&output_decrypted_path_base_buf, decrypted_data)?;
+        eprintln!("Warning: Could not detect file format and no extension was stored. Saving decrypted data as is to: {:?}", final_output_path);
+        // final_output_path remains the base path (no extension)
     }
+    
+    fs::write(&final_output_path, decrypted_data)?;
 
     Ok(())
 }
@@ -545,6 +630,23 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_file_format_extended() {
+        assert_eq!(detect_file_format(b"%PDF-1.4"), Some("pdf"));
+        assert_eq!(detect_file_format(&[0x50, 0x4B, 0x03, 0x04, 0x0A, 0x00]), Some("zip")); // ZIP PK0304
+        assert_eq!(detect_file_format(b"ID3\x03\x00..."), Some("mp3")); // MP3 with ID3
+        assert_eq!(detect_file_format(&[0xFF, 0xFB, 0x90, 0x44, 0x00]), Some("mp3")); // MP3 frame sync
+        assert_eq!(detect_file_format(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"), Some("mp4")); // MP4
+        assert_eq!(detect_file_format(b"RIFF\x00\x00\x00\x00WAVEfmt "), Some("wav")); // WAV
+        assert_eq!(detect_file_format(&[0x1F, 0x8B, 0x08, 0x00]), Some("gz")); // GZIP
+        let mut tar_data = vec![0u8; 512]; // TAR header is 512 bytes
+        tar_data[257..262].copy_from_slice(b"ustar");
+        assert_eq!(detect_file_format(&tar_data), Some("tar"));
+        assert_eq!(detect_file_format(b"{\\rtf1\\ansi...}"), Some("rtf"));
+        assert_eq!(detect_file_format(b"fLaC\x00\x00\x00\x22"), Some("flac")); // Native FLAC
+        assert_eq!(detect_file_format(b"OggS\x00\x02"), Some("ogg"));
+    }
+
+    #[test]
     fn test_detect_file_format_unknown() {
         assert_eq!(detect_file_format(b"this is not an image"), None);
         assert_eq!(detect_file_format(&[0x01, 0x02, 0x03, 0x04]), None);
@@ -568,24 +670,33 @@ mod tests {
         let temp_dir = tempdir()?;
         let png_path = temp_dir.path().join("test_steg_payload.png");
         
+        // Payload now includes ExtLen and Extension
+        let original_ext = "dat";
+        let ext_len_byte = original_ext.len() as u8;
+        let ext_bytes = original_ext.as_bytes();
+
         let salt_bytes = [1u8; SALT_STRING_LEN];
         let nonce_bytes = [2u8; NONCE_STRING_LEN];
         let ciphertext_bytes = b"dummy_ciphertext_data";
-        let mut original_payload = Vec::new();
-        original_payload.extend_from_slice(&salt_bytes);
-        original_payload.extend_from_slice(&nonce_bytes);
-        original_payload.extend_from_slice(ciphertext_bytes);
+        
+        let mut original_payload_content = Vec::new(); // This is what's after Version, Salt, ExtLen, Ext, Nonce
+        original_payload_content.extend_from_slice(&salt_bytes);
+        original_payload_content.push(ext_len_byte);
+        original_payload_content.extend_from_slice(ext_bytes);
+        original_payload_content.extend_from_slice(&nonce_bytes);
+        original_payload_content.extend_from_slice(ciphertext_bytes);
 
-        let lsb_config: u8 = 2; // Use 2 LSBs for payload
-        // Image size needs to be sufficient for header (5 bytes, 1 LSB) + payload (original_payload.len(), 2 LSBs)
-        // Header: 5 bytes * 8 bits/byte / (3 channels * 1 bit/channel) = 40/3 = 14 pixels
-        // Payload: original_payload.len() * 8 bits/byte / (3 channels * 2 bits/channel) 
-        // Example: (22+12+21) * 8 / 6 = 55 * 8 / 6 = 440 / 6 = 74 pixels
-        // Total pixels = 14 + 74 = 88 pixels. A 10x10 image (100 pixels) is enough.
-        create_steganographic_png_for_test(&png_path, lsb_config, &original_payload, 10, 10)?;
+
+        let lsb_config: u8 = 2; 
+        // Recalculate pixels needed:
+        // Header: 5 bytes (1 LSB/ch) -> 14 pixels
+        // Payload: (22 salt + 1 ext_len + 3 ext + 12 nonce + 21 cipher) = 59 bytes
+        // Payload bits: 59 * 8 = 472 bits. Pixels for payload (2 LSB/ch): ceil(472 / (3*2)) = ceil(472/6) = 79 pixels
+        // Total pixels = 14 + 79 = 93 pixels. A 10x10 image (100 pixels) is enough.
+        create_steganographic_png_for_test(&png_path, lsb_config, &original_payload_content, 10, 10)?;
 
         let extracted_payload = extract_payload_from_carrier(&png_path, "png")?;
-        assert_eq!(extracted_payload, original_payload);
+        assert_eq!(extracted_payload, original_payload_content);
         Ok(())
     }
 
