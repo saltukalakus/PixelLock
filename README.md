@@ -12,7 +12,7 @@ You may optionally pass a PNG formatted base image to hide your encrypted image 
 
 You may open any feature requests in the issues section. Please check existing open issues before opening a new one. 
 
-Also don't forget to ⭐️ the project if you find it useful. 🤩
+Also don't forget to ⭐️ the project if you find it useful 🤩
 
 ![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
 
@@ -86,6 +86,8 @@ Output
 This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can decrypt at least one of the images, you win 500 GBP 💰 
 
 The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one can hack it by then. All the other details are in the Gist including the rules and conditions.
+
+To the best of my knowledge, the security choices and the used libraries in this project are solid. If you are able to break it you should be a security 🧙‍♂️
 
 ## 👩‍⚖️ Disclaimer 👨‍⚖️
 
