@@ -107,7 +107,7 @@ fn extract_payload_from_carrier(
         let payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?;
         println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
         Ok(payload)
-    } else if (input_extension == "png") {
+    } else if input_extension == "png" {
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
         
@@ -129,7 +129,7 @@ fn extract_payload_from_carrier(
                 for &channel_value in pixel_channels.iter().take(3) { // Iterate over R, G, B channels
                     // Extract LSB_BITS_FOR_HEADER (1 bit) from the channel
                     // In this loop, we are always using lsb_bits_for_header (1)
-                    let current_extracted_bit = (channel_value >> 0) & data_extract_mask_header; // Extract the 0-th bit
+                    let current_extracted_bit = channel_value & data_extract_mask_header; // Extract the 0-th bit
                     current_reconstructed_byte |= current_extracted_bit << bits_in_current_byte;
                     bits_in_current_byte += 1;
 
@@ -198,11 +198,9 @@ fn extract_payload_from_carrier(
                                 // but acts as a safeguard for bit-level counting.
                                 // Transition to payload extraction is handled when header_len_bytes are formed.
                             }
-                        } else {
-                            if expected_total_payload_len_opt.is_some_and(|l| bits_processed_in_current_pixel_group >= l * 8) {
-                                // Similar safeguard for payload bits.
-                                // Transition/exit is handled by bytes_extracted_count for payload.
-                            }
+                        } else if expected_total_payload_len_opt.is_some_and(|l| bits_processed_in_current_pixel_group >= l * 8) {
+                            // Similar safeguard for payload bits.
+                            // Transition/exit is handled by bytes_extracted_count for payload.
                         }
 
 
@@ -386,7 +384,102 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
 
 #[cfg(test)]
 mod tests {
-    use super::*; // To bring detect_file_format into scope for tests
+    use super::*; 
+    use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN}; // For constants
+    use tempfile::tempdir;
+    use std::fs;
+    use image::{RgbImage, ImageFormat}; // For creating test PNGs
+    use base64::{engine::general_purpose}; // For TXT test
+
+    // Helper to create a dummy PNG with embedded data for testing extraction
+    // This is a simplified embedding, primarily for testing extraction logic
+    fn create_steganographic_png_for_test(
+        path: &Path,
+        lsb_config_for_payload: u8,
+        payload_data: &[u8],
+        image_width: u32,
+        image_height: u32,
+    ) -> Result<(), CryptoImageError> {
+        let mut header_to_embed = vec![lsb_config_for_payload];
+        header_to_embed.extend_from_slice(&(payload_data.len() as u32).to_be_bytes());
+
+        let mut carrier_image = RgbImage::new(image_width, image_height);
+        // Fill with some default pixels, e.g., black or random
+        for pixel in carrier_image.pixels_mut() {
+            *pixel = image::Rgb([0, 0, 0]);
+        }
+
+        let mut bit_idx_overall = 0;
+        let mut current_data_source_byte_idx = 0;
+        let mut current_data_source_bit_idx = 0;
+        let mut embedding_header = true;
+
+        let lsb_for_header: u8 = 1;
+
+        'embedding_loop: for y in 0..image_height {
+            for x in 0..image_width {
+                let pixel = carrier_image.get_pixel_mut(x, y);
+                for channel_idx in 0..3 {
+                    let (_active_data_source, _active_lsb_bits, active_total_bits): (&[u8], u8, usize) = if embedding_header {
+                        (header_to_embed.as_slice(), lsb_for_header, header_to_embed.len() * 8)
+                    } else {
+                        (payload_data, lsb_config_for_payload, payload_data.len() * 8)
+                    };
+
+                    if bit_idx_overall >= active_total_bits {
+                        if embedding_header {
+                            embedding_header = false;
+                            bit_idx_overall = 0;
+                            current_data_source_byte_idx = 0;
+                            current_data_source_bit_idx = 0;
+                            if active_total_bits == header_to_embed.len() * 8 && payload_data.is_empty() { // Header done, no payload
+                                break 'embedding_loop;
+                            }
+                            // Re-evaluate active_data_source for the new stage (payload)
+                            let (_new_data_source, _new_lsb_bits, new_total_bits) = 
+                                (payload_data, lsb_config_for_payload, payload_data.len() * 8);
+                            if bit_idx_overall >= new_total_bits { // Check if payload is already "done" (e.g. empty)
+                                break 'embedding_loop;
+                            }
+                            // Continue with payload embedding in the same channel if space
+                        } else { // Payload done
+                            break 'embedding_loop;
+                        }
+                    }
+                    
+                    // Re-fetch active_data_source and its properties in case stage changed
+                     let (current_active_data_source, current_active_lsb_bits, current_active_total_bits): (&[u8], u8, usize) = if embedding_header {
+                        (header_to_embed.as_slice(), lsb_for_header, header_to_embed.len() * 8)
+                    } else {
+                        (payload_data, lsb_config_for_payload, payload_data.len() * 8)
+                    };
+
+
+                    let actual_clear_mask = if current_active_lsb_bits == 8 { 0x00 } else { 0xFF << current_active_lsb_bits };
+                    
+                    let mut bits_for_channel: u8 = 0;
+                    for bit_k in 0..current_active_lsb_bits {
+                        if bit_idx_overall < current_active_total_bits {
+                            let data_byte = current_active_data_source[current_data_source_byte_idx];
+                            let current_data_bit = (data_byte >> current_data_source_bit_idx) & 1;
+                            bits_for_channel |= current_data_bit << bit_k;
+                            
+                            bit_idx_overall += 1;
+                            current_data_source_bit_idx += 1;
+                            if current_data_source_bit_idx == 8 {
+                                current_data_source_bit_idx = 0;
+                                current_data_source_byte_idx += 1;
+                            }
+                        } else { break; }
+                    }
+                    pixel.0[channel_idx] = (pixel.0[channel_idx] & actual_clear_mask) | bits_for_channel;
+                }
+            }
+        }
+        carrier_image.save_with_format(path, ImageFormat::Png)?;
+        Ok(())
+    }
+
 
     #[test]
     fn test_detect_file_format_known() {
@@ -403,5 +496,136 @@ mod tests {
     fn test_detect_file_format_unknown() {
         assert_eq!(detect_file_format(b"this is not an image"), None);
         assert_eq!(detect_file_format(&[0x01, 0x02, 0x03, 0x04]), None);
+    }
+
+    #[test]
+    fn test_extract_payload_from_txt_valid() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let txt_path = temp_dir.path().join("test_payload.txt");
+        let original_payload = b"This is a test payload for TXT.";
+        let base64_payload = general_purpose::STANDARD.encode(original_payload);
+        fs::write(&txt_path, base64_payload)?;
+
+        let extracted_payload = extract_payload_from_carrier(&txt_path, "txt")?;
+        assert_eq!(extracted_payload, original_payload.to_vec());
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_from_png_valid() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let png_path = temp_dir.path().join("test_steg_payload.png");
+        
+        let salt_bytes = [1u8; SALT_STRING_LEN];
+        let nonce_bytes = [2u8; NONCE_STRING_LEN];
+        let ciphertext_bytes = b"dummy_ciphertext_data";
+        let mut original_payload = Vec::new();
+        original_payload.extend_from_slice(&salt_bytes);
+        original_payload.extend_from_slice(&nonce_bytes);
+        original_payload.extend_from_slice(ciphertext_bytes);
+
+        let lsb_config: u8 = 2; // Use 2 LSBs for payload
+        // Image size needs to be sufficient for header (5 bytes, 1 LSB) + payload (original_payload.len(), 2 LSBs)
+        // Header: 5 bytes * 8 bits/byte / (3 channels * 1 bit/channel) = 40/3 = 14 pixels
+        // Payload: original_payload.len() * 8 bits/byte / (3 channels * 2 bits/channel) 
+        // Example: (22+12+21) * 8 / 6 = 55 * 8 / 6 = 440 / 6 = 74 pixels
+        // Total pixels = 14 + 74 = 88 pixels. A 10x10 image (100 pixels) is enough.
+        create_steganographic_png_for_test(&png_path, lsb_config, &original_payload, 10, 10)?;
+
+        let extracted_payload = extract_payload_from_carrier(&png_path, "png")?;
+        assert_eq!(extracted_payload, original_payload);
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_png_header_too_short() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let png_path = temp_dir.path().join("test_steg_short_header.png");
+        // Image 1x1 pixel can hold 3 bits for header (using 1 LSB). Header needs 5 bytes = 40 bits.
+        create_steganographic_png_for_test(&png_path, 1, b"payload", 1, 1)?; 
+
+        let result = extract_payload_from_carrier(&png_path, "png");
+        assert!(matches!(result, Err(CryptoImageError::Steganography(msg)) if msg.contains("too small to extract full header")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_png_invalid_lsb_config_in_header() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let png_path = temp_dir.path().join("test_steg_invalid_lsb.png");
+        let invalid_lsb_config: u8 = 0; // Invalid LSB config
+        // Create a PNG where the first byte of the header is `invalid_lsb_config`
+        // Image needs to be large enough for the header (5 bytes, 1 LSB/channel) -> 14 pixels. 4x4=16 pixels.
+        create_steganographic_png_for_test(&png_path, invalid_lsb_config, b"payload", 4, 4)?;
+
+        let result = extract_payload_from_carrier(&png_path, "png");
+        assert!(matches!(result, Err(CryptoImageError::Steganography(msg)) if msg.contains("Invalid LSB/embedding configuration")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_png_payload_length_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let png_path = temp_dir.path().join("test_steg_payload_len_mismatch.png");
+
+        // Create a header that claims a large payload, but image is too small for it
+        let lsb_config: u8 = 1;
+        let claimed_payload_len: u32 = 1000; // Large payload
+        let _actual_payload_data = b"short"; // Actual data is short
+
+        let mut header_to_embed = vec![lsb_config];
+        header_to_embed.extend_from_slice(&claimed_payload_len.to_be_bytes());
+        
+        // Image size: 5x5 = 25 pixels.
+        // Header needs 14 pixels. Remaining 11 pixels.
+        // 11 pixels * 3 channels/pixel * 1 bit/channel = 33 bits = 4 bytes for payload.
+        // This is less than `claimed_payload_len`.
+        // We use the helper, but the helper will embed `actual_payload_data`.
+        // The extraction logic should read the `claimed_payload_len` from the header.
+        // The helper needs to be adjusted or a more manual PNG created for this specific case.
+        // For now, let's test the scenario where the header is read correctly, but then extraction fails.
+        // The current `create_steganographic_png_for_test` embeds the *actual* payload length.
+        // To test this properly, we'd need to craft a PNG where the *embedded header* has a large length,
+        // but the image itself is small.
+
+        // Simplified: create an image that can hold the header, but not the claimed payload.
+        // Header (5 bytes, 1 LSB/channel) -> 14 pixels.
+        // Let's make an image of 5x3=15 pixels. It can hold the header.
+        // If header says payload is 1000 bytes, it will fail.
+        let mut carrier_image = RgbImage::new(5, 3); // 15 pixels
+        for pixel in carrier_image.pixels_mut() { *pixel = image::Rgb([0,0,0]); }
+
+        let mut _bit_idx_overall = 0;
+        let mut current_data_source_byte_idx = 0;
+        let mut current_data_source_bit_idx = 0;
+        
+        'header_embed_loop: for y in 0..3 { // 5x3 image
+            for x in 0..5 {
+                let pixel = carrier_image.get_pixel_mut(x,y);
+                for channel_idx in 0..3 {
+                    if current_data_source_byte_idx >= header_to_embed.len() { break 'header_embed_loop; }
+
+                    let data_byte = header_to_embed[current_data_source_byte_idx];
+                    let current_data_bit = (data_byte >> current_data_source_bit_idx) & 1;
+                    
+                    pixel.0[channel_idx] = (pixel.0[channel_idx] & 0xFE) | current_data_bit; // Embed in LSB
+
+                    _bit_idx_overall +=1;
+                    current_data_source_bit_idx +=1;
+                    if current_data_source_bit_idx == 8 {
+                        current_data_source_bit_idx = 0;
+                        current_data_source_byte_idx +=1;
+                    }
+                }
+            }
+        }
+        carrier_image.save_with_format(&png_path, ImageFormat::Png)?;
+
+
+        let result = extract_payload_from_carrier(&png_path, "png");
+        // Expecting error because the image is too small for the payload length specified in its header
+        assert!(matches!(result, Err(CryptoImageError::Steganography(ref msg)) if msg.contains("data incomplete") || msg.contains("too small")), "Result was: {:?}", result);
+
+        Ok(())
     }
 }

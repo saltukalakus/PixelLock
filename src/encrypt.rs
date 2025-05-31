@@ -34,7 +34,7 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
 ) -> Result<RgbImage, CryptoImageError> {
     if let Some(base_path_ref) = base_image_path_opt {
         let base_path = base_path_ref.as_ref();
-        if (!base_path.exists()) {
+        if !base_path.exists() {
             return Err(CryptoImageError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Base image not found: {:?}", base_path),
@@ -348,7 +348,7 @@ pub fn process_folder_encryption(
         }
     };
 
-    if (!output_dir.exists()) {
+    if !output_dir.exists() {
         if let Err(e) = fs::create_dir_all(output_dir) {
             eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
             std::process::exit(1);
@@ -441,12 +441,9 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use zeroize::Zeroizing;
-    use crate::decrypt::decrypt_image; // Corrected: For round-trip testing
+    use crate::decrypt::decrypt_image; 
     use crate::error_types::CryptoImageError;
-    use image::{RgbImage, ImageFormat}; // Corrected: Removed 'random' from here
-    // Note: 'random' function is brought into scope by `use super::*;` 
-    // from the top-level `use rand::{..., random};`
-
+    use image::{RgbImage, ImageFormat, GenericImageView}; // Added GenericImageView
 
     // Helper function to create a dummy PNG file for testing base image functionality.
     fn create_dummy_png(path: &Path, width: u32, height: u32) -> Result<(), CryptoImageError> {
@@ -457,6 +454,89 @@ mod tests {
         img.save_with_format(path, ImageFormat::Png)?;
         Ok(())
     }
+
+    #[test]
+    fn test_prepare_carrier_image_no_base() -> Result<(), CryptoImageError> {
+        let pixels_needed = 100;
+        let carrier = prepare_carrier_image::<PathBuf>(None, pixels_needed)?;
+        assert_eq!((carrier.width() as usize) * (carrier.height() as usize), pixels_needed, "Generated image should have area equal to pixels_needed");
+        // For a square-ish image for 100 pixels, it would be 10x10.
+        // prepare_carrier_image aims for width = ceil(sqrt(pixels_needed)), height = ceil(pixels_needed / width)
+        // sqrt(100) = 10. width = 10. height = 100/10 = 10.
+        assert_eq!(carrier.width(), 10);
+        assert_eq!(carrier.height(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_carrier_image_base_larger() -> Result<(), CryptoImageError> {
+        let temp_dir = tempdir()?;
+        let base_path = temp_dir.path().join("base_larger.png");
+        create_dummy_png(&base_path, 20, 20)?; // 400 pixels
+
+        let pixels_needed = 100;
+        let carrier = prepare_carrier_image(Some(&base_path), pixels_needed)?;
+        assert_eq!(carrier.width(), 20);
+        assert_eq!(carrier.height(), 20); // Should use the original base image as is
+        
+        // Verify content is from base_path (simple check, e.g. first pixel)
+        let original_base_img = image::open(&base_path)?.to_rgb8();
+        assert_eq!(carrier.get_pixel(0,0), original_base_img.get_pixel(0,0));
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_carrier_image_base_smaller_needs_tiling() -> Result<(), CryptoImageError> {
+        let temp_dir = tempdir()?;
+        let base_path = temp_dir.path().join("base_smaller.png");
+        create_dummy_png(&base_path, 5, 5)?; // 25 pixels
+
+        let pixels_needed = 100; // Needs 4x tiling (5x5 -> 10x10)
+        let carrier = prepare_carrier_image(Some(&base_path), pixels_needed)?;
+        
+        // Expected dimensions after tiling to fit 100 pixels from a 5x5 base:
+        // 5*num_tiles_x * 5*num_tiles_y >= 100
+        // If num_tiles_x = 2, num_tiles_y = 2 => 10 * 10 = 100 pixels.
+        assert_eq!(carrier.width(), 10, "Carrier width should be tiled correctly");
+        assert_eq!(carrier.height(), 10, "Carrier height should be tiled correctly");
+        assert_eq!((carrier.width() * carrier.height()) as usize, pixels_needed);
+
+        // Check if tiling pattern is correct (e.g. pixel (5,0) should be same as (0,0) from original)
+        let original_base_img = image::open(&base_path)?.to_rgb8();
+        assert_eq!(carrier.get_pixel(0,0), original_base_img.get_pixel(0,0));
+        assert_eq!(carrier.get_pixel(5,0), original_base_img.get_pixel(0,0)); // Tiled horizontally
+        assert_eq!(carrier.get_pixel(0,5), original_base_img.get_pixel(0,0)); // Tiled vertically
+        assert_eq!(carrier.get_pixel(5,5), original_base_img.get_pixel(0,0)); // Tiled diagonally
+
+        temp_dir.close()?;
+        Ok(())
+    }
+    
+    #[test]
+    fn test_prepare_carrier_image_base_not_found() {
+        let base_path = PathBuf::from("non_existent_base.png");
+        let pixels_needed = 100;
+        let result = prepare_carrier_image(Some(&base_path), pixels_needed);
+        assert!(matches!(result, Err(CryptoImageError::Io(_))));
+    }
+
+    #[test]
+    fn test_prepare_carrier_image_base_not_png() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let base_path = temp_dir.path().join("base_not_png.jpg");
+        // Create a dummy file that is not a PNG
+        fs::write(&base_path, b"this is not a png")?;
+
+        let pixels_needed = 100;
+        let result = prepare_carrier_image(Some(&base_path), pixels_needed);
+        assert!(matches!(result, Err(CryptoImageError::InvalidParameter(_))));
+        
+        temp_dir.close()?;
+        Ok(())
+    }
+
 
     #[test]
     fn test_encrypt_decrypt_round_trip_txt() -> Result<(), Box<dyn std::error::Error>> {
@@ -579,6 +659,163 @@ mod tests {
         assert!(decrypted_path_base.exists(), "Decrypted file (with base) should exist.");
         let decrypted_data_content = fs::read(&decrypted_path_base)?;
         assert_eq!(data_to_encrypt.to_vec(), decrypted_data_content, "Decrypted data should match original for steganographic PNG (with base).");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_empty_file_txt() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_file_path = temp_dir.path().join("empty_input.dat");
+        let encrypted_path_base = temp_dir.path().join("empty_encrypted_txt");
+        let decrypted_path_base = temp_dir.path().join("empty_decrypted_txt");
+
+        fs::write(&input_file_path, b"")?; // Empty file
+
+        let secret = Zeroizing::new("TestSecretForEmptyFile1!".to_string());
+        let output_format = "txt";
+        let lsb_bits = 1; // Not used for txt
+
+        encrypt_image(
+            &input_file_path,
+            &encrypted_path_base,
+            &secret,
+            output_format,
+            None::<PathBuf>, // No base image
+            lsb_bits,
+        )?;
+
+        let encrypted_file_with_ext = encrypted_path_base.with_extension("txt");
+        assert!(encrypted_file_with_ext.exists());
+
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path_base,
+            &secret,
+        )?;
+        
+        // For empty file, decrypted output path might not have an extension if detect_file_format returns None
+        // So we read the base path directly.
+        let decrypted_data = fs::read(&decrypted_path_base)?;
+        assert_eq!(decrypted_data, b"", "Decrypted data for empty file should be empty.");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_empty_file_png_no_base() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_file_path = temp_dir.path().join("empty_input_for_png.dat"); // Can be any extension for content
+        let encrypted_path_base = temp_dir.path().join("empty_encrypted_png");
+        let decrypted_path_base = temp_dir.path().join("empty_decrypted_png");
+
+        fs::write(&input_file_path, b"")?; // Empty file
+
+        let secret = Zeroizing::new("TestSecretForEmptyPng1!".to_string());
+        let output_format = "png";
+        // When no base image, lsb_bits is effectively 8, but the param is passed.
+        // The actual lsb_bits_per_channel used for embedding is 8.
+        let lsb_bits_param = 8; 
+
+        encrypt_image(
+            &input_file_path,
+            &encrypted_path_base,
+            &secret,
+            output_format,
+            None::<PathBuf>, // No base image
+            lsb_bits_param,
+        )?;
+
+        let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
+        assert!(encrypted_file_with_ext.exists());
+
+        // Check carrier image size for empty payload (salt + nonce + 0 bytes data)
+        // Header (5 bytes) + Salt (22 bytes) + Nonce (12 bytes) = 39 bytes
+        // Header bits = 5 * 8 = 40 bits. Pixels for header (1 LSB/channel) = ceil(40 / (3*1)) = 14 pixels
+        // Payload bits = (22+12) * 8 = 34 * 8 = 272 bits. Pixels for payload (8 LSB/channel) = ceil(272 / (3*8)) = ceil(272/24) = 12 pixels
+        // Total pixels needed = 14 + 12 = 26 pixels.
+        // prepare_carrier_image will create sqrt(26) ~ 5.09 -> 6x5 or 6x6 image (e.g. 6x5=30 pixels)
+        let carrier_img = image::open(&encrypted_file_with_ext)?;
+        assert!((carrier_img.width() * carrier_img.height()) >= 26, "Carrier image for empty payload is too small.");
+
+
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path_base,
+            &secret,
+        )?;
+        
+        let decrypted_data = fs::read(&decrypted_path_base)?;
+        assert_eq!(decrypted_data, b"", "Decrypted data for empty file (PNG) should be empty.");
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_steganography_carrier_too_small_for_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let input_file_path = temp_dir.path().join("large_payload.dat");
+        let base_image_path = temp_dir.path().join("tiny_carrier.png");
+        let encrypted_path_base = temp_dir.path().join("encrypted_output");
+        let decrypted_path_base = temp_dir.path().join("decrypted_output_for_tiled");
+
+        // Create a large payload
+        let large_data = vec![0u8; 1000]; // 1000 bytes
+        fs::write(&input_file_path, &large_data)?;
+        
+        // Create a very small base image (e.g., 1x1 pixel)
+        create_dummy_png(&base_image_path, 1, 1)?;
+
+        let secret = Zeroizing::new("TinyCarrierTestSecret1!".to_string());
+        let output_format = "png";
+        let lsb_bits = 1; // 1 LSB per channel
+
+        // Encrypt_image should succeed by tiling the small base image.
+        let result = encrypt_image(
+            &input_file_path,
+            &encrypted_path_base,
+            &secret,
+            output_format,
+            Some(&base_image_path),
+            lsb_bits,
+        );
+        assert!(result.is_ok(), "Encryption should succeed by tiling the small base image. Error: {:?}", result.err());
+
+        let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
+        assert!(encrypted_file_with_ext.exists(), "Encrypted PNG file should exist.");
+
+        // Verify that the output image was tiled (i.e., is larger than 1x1)
+        let output_image = image::open(&encrypted_file_with_ext)?;
+        let (output_width, output_height) = output_image.dimensions(); // Now GenericImageView is in scope
+        assert!(output_width > 1 || output_height > 1, "Output image should be larger than the 1x1 base image due to tiling.");
+
+        // Calculate expected pixels needed to confirm sufficient tiling
+        // Payload: 1000 bytes. AES-GCM tag: 16 bytes. Total encrypted: 1016 bytes.
+        // Raw output payload: salt (22) + nonce (12) + encrypted_data (1016) = 1050 bytes.
+        // Header: lsb_config (1) + payload_len (4) = 5 bytes.
+        // Total header bits: 5 * 8 = 40 bits. Bits per pixel for header (1 LSB/channel): 3.
+        // Pixels for header: ceil(40/3) = 14.
+        // Total payload bits: 1050 * 8 = 8400 bits. Bits per pixel for payload (1 LSB/channel): 3.
+        // Pixels for payload: ceil(8400/3) = 2800.
+        // Total pixels needed: 14 + 2800 = 2814.
+        let expected_pixels_needed = 2814;
+        assert!((output_width as usize * output_height as usize) >= expected_pixels_needed, 
+                "Output image capacity ({}) should be >= expected_pixels_needed ({})", 
+                output_width as usize * output_height as usize, expected_pixels_needed);
+
+
+        // Decrypt and verify data
+        decrypt_image(
+            &encrypted_file_with_ext,
+            &decrypted_path_base,
+            &secret,
+        )?;
+
+        let decrypted_data_content = fs::read(&decrypted_path_base)?;
+        assert_eq!(large_data, decrypted_data_content, "Decrypted data should match original after tiling.");
 
         temp_dir.close()?;
         Ok(())
