@@ -43,6 +43,13 @@ pub fn process_folder_decryption(
                     Ok(entry) => {
                         let current_input_file_path = entry.path();
                         if current_input_file_path.is_file() {
+                            // Skip hidden files (e.g., .DS_Store) robustly
+                            if let Some(name_os_str) = current_input_file_path.file_name() {
+                                if name_os_str.to_string_lossy().starts_with('.') {
+                                    continue; // Silently skip hidden files
+                                }
+                            }
+
                             let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
                             let lower_extension = extension.to_lowercase();
 
