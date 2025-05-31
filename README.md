@@ -6,6 +6,10 @@ PixelLock is a command-line tool to secure your pictures with military-grade enc
 
 Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
 
+The tool allows you generate encrypted images in two different formats: Base64 text or a PNG image. 
+
+You may optionally pass a PNG formatted base image to hide your encrypted image in it. When the base image is provıded the tool allows configuring the blending ration to allow decide the final generated picture distortion level vs the output file size.
+
 ![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
 
 
@@ -70,7 +74,7 @@ Output
 *  📖 For a full list of available options, try the help command:
 
 ```bash
-PixelLock --help  
+> PixelLock --help  
 ```
 
 ## 💥 Security Challenge 💥
