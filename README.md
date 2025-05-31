@@ -1,4 +1,4 @@
-### <img src="./PixelLock.jpeg" alt="Logo" width="200"> 
+![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.png)
 
 PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images. Image formats currently supported are JPEG, PNG, BMP, GIF, TIFF, and WebP. 
 
