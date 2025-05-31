@@ -2,13 +2,13 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
 use image::{RgbImage};
 use rand::{rngs::OsRng, Rng, random};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}}; // fs and Path are used by process_folder_encryption
 use argon2::password_hash::SaltString;
 use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
-use crate::secret::{derive_encryption_key_with_salt}; // Changed from crate::utils
+use crate::secret::{derive_encryption_key_with_salt}; 
 
 // Define constants here
 pub const SALT_STRING_LEN: usize = 22;
@@ -322,6 +322,115 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         base_image_path_opt,
         lsb_bits_per_channel,
     )
+}
+
+/// Processes all supported files in an input directory for encryption.
+pub fn process_folder_encryption(
+    input_dir_str: &str,
+    output_dir_str: &str,
+    encryption_secret: &Zeroizing<String>, // Changed: Takes secret directly
+    output_format_preference: &str,
+    base_image_path_str_opt: Option<&String>, // Note: This is &String, consider if &Path or String is better
+    lsb_bits: u8,
+) {
+    let input_dir = Path::new(input_dir_str);
+    let output_dir = Path::new(output_dir_str);
+
+    // Generate salt and derive key ONCE for the entire folder
+    let salt_for_folder = SaltString::generate(&mut OsRng);
+    let derived_key = match derive_encryption_key_with_salt(encryption_secret, &salt_for_folder) {
+        Ok(key) => key,
+        Err(e) => {
+            eprintln!("Error deriving key for folder encryption: {}", e);
+            // Consistent with other error handling in this function, exit.
+            // Consider changing this function to return Result for better library use.
+            std::process::exit(1); 
+        }
+    };
+
+    if (!output_dir.exists()) {
+        if let Err(e) = fs::create_dir_all(output_dir) {
+            eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
+            std::process::exit(1);
+        }
+        println!("Created output directory: {:?}", output_dir);
+    } else if !output_dir.is_dir() {
+        eprintln!("Error: Output path '{}' exists but is not a directory.", output_dir_str);
+        std::process::exit(1);
+    }
+
+    match fs::read_dir(input_dir) {
+        Ok(entries) => {
+            let mut files_processed_successfully = 0;
+            let mut files_failed_to_process = 0;
+            let mut files_skipped_extension = 0;
+            println!("\nStarting folder encryption...");
+
+            for entry_result in entries {
+                match entry_result {
+                    Ok(entry) => {
+                        let current_input_file_path = entry.path();
+                        if current_input_file_path.is_file() {
+                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            let lower_extension = extension.to_lowercase();
+                            let supported_encryption_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
+                            
+                            if !supported_encryption_extensions.contains(&lower_extension.as_str()) {
+                                files_skipped_extension += 1;
+                                continue;
+                            }
+
+                            let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
+                            let input_filename_complete_str = file_name_os_str.to_string_lossy();
+                            let new_base_name = format!("{}.encrypted", input_filename_complete_str);
+                            let current_output_file_path_base = output_dir.join(new_base_name);
+
+                            print!("Encrypting {:?} -> {:?} (final extension .{}) ... ",
+                                   current_input_file_path,
+                                   current_output_file_path_base,
+                                   output_format_preference);
+                            
+                            // Pass base_image_path_str_opt by mapping &String to &Path
+                            let base_path_for_core = base_image_path_str_opt.map(|s| Path::new(s.as_str()));
+
+                            match encrypt_image_core( // Calling self::encrypt_image_core
+                                &current_input_file_path,
+                                &current_output_file_path_base,
+                                &derived_key, // Use the key derived above
+                                &salt_for_folder, // Use the salt generated above
+                                output_format_preference,
+                                base_path_for_core, // Pass the mapped &Path
+                                lsb_bits,
+                            ) {
+                                Ok(_) => {
+                                    println!("Done.");
+                                    files_processed_successfully += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("\nError encrypting file {:?}: {}", current_input_file_path, e);
+                                    files_failed_to_process += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading a directory entry: {}", e);
+                        files_failed_to_process += 1;
+                    }
+                }
+            }
+            println!("\nFolder encryption summary:");
+            println!("  Files successfully encrypted: {}", files_processed_successfully);
+            println!("  Files failed to encrypt: {}", files_failed_to_process);
+            if files_skipped_extension > 0 {
+                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
+            std::process::exit(1);
+        }
+    }
 }
 
 

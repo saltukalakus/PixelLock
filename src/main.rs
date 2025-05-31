@@ -1,9 +1,7 @@
-use std::{fs, io::{self, Write}, path::{Path}};
+use std::{io::{self, Write}, path::{Path}};
 use clap::{Arg, ArgAction, Command}; 
 use rpassword::read_password;
 use zeroize::Zeroizing;
-use argon2::password_hash::SaltString; // Added for generating salt in main
-use rand::rngs::OsRng; // Added for SaltString::generate
 
 mod secret; // Changed from mod utils;
 mod error_types; 
@@ -137,159 +135,6 @@ fn build_cli_command() -> Command { // Renamed and changed return type
         )
 }
 
-/// Processes all supported files in an input directory for encryption or decryption.
-///
-/// # Arguments
-/// * `input_dir_str` - Path to the input directory.
-/// * `output_dir_str` - Path to the output directory.
-/// * `is_encrypt` - `true` for encryption mode, `false` for decryption mode.
-/// * `secret_or_key_salt` - Either the user's secret (for decryption) or pre-derived key and salt (for encryption).
-/// * `output_format_preference` - Preferred output format for encryption ("txt" or "png").
-/// * `base_image_path_str_opt` - Optional path to a base image for steganography.
-/// * `lsb_bits_for_encryption` - LSB bits to use per channel for steganographic encryption.
-fn process_folder_mode(
-    input_dir_str: &str, 
-    output_dir_str: &str, 
-    is_encrypt: bool, 
-    // For encryption: derived_key and salt_for_payload. For decryption: secret.
-    // We'll pass them separately for type safety in the call.
-    // Let's adjust the parameters based on `is_encrypt` before calling, or use an enum.
-    // For simplicity, we'll adjust parameters in main and pass what's needed.
-    // So, for encryption, this will receive derived_key and salt_for_payload.
-    // For decryption, it will receive the secret.
-    // This means the function signature needs to be more flexible or we need two versions.
-    // Let's pass what's needed directly.
-    secret_for_decryption: Option<&Zeroizing<String>>, // Only for decryption
-    derived_key_for_encryption: Option<&[u8; 32]>, // Only for encryption
-    salt_for_encryption_payload: Option<&SaltString>, // Only for encryption
-    output_format_preference: &str, 
-    base_image_path_str_opt: Option<&String>, 
-    lsb_bits_for_encryption: u8
-) {
-    let input_dir = Path::new(input_dir_str);
-
-    // Ensure output directory exists or create it.
-    let output_dir = Path::new(output_dir_str);
-
-    // Ensure output directory exists or create it.
-    if !output_dir.exists() {
-        if let Err(e) = fs::create_dir_all(output_dir) {
-            eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
-            std::process::exit(1);
-        }
-        println!("Created output directory: {:?}", output_dir);
-    } else if !output_dir.is_dir() {
-        eprintln!("Error: Output path '{}' exists but is not a directory.", output_dir_str);
-        std::process::exit(1);
-    }
-
-    // Read directory entries.
-    match fs::read_dir(input_dir) {
-        Ok(entries) => {
-            let mut files_processed_successfully = 0;
-            let mut files_failed_to_process = 0;
-            let mut files_skipped_extension = 0;
-            println!("\nStarting folder processing...");
-
-            for entry_result in entries {
-                match entry_result {
-                    Ok(entry) => {
-                        let current_input_file_path = entry.path();
-                        if current_input_file_path.is_file() {
-                            // Determine if the file should be processed based on its extension and current mode.
-                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                            let lower_extension = extension.to_lowercase();
-
-                            let should_process = if is_encrypt {
-                                // Supported extensions for encryption input.
-                                let supported_encryption_extensions = ["jpeg", "jpg", "bmp", "png", "gif", "tiff", "tif", "webp"];
-                                supported_encryption_extensions.contains(&lower_extension.as_str())
-                            } else {
-                                // Supported extensions for decryption input.
-                                lower_extension == "txt" || lower_extension == "png"
-                            };
-
-                            if !should_process {
-                                files_skipped_extension += 1;
-                                continue; // Skip unsupported files.
-                            }
-
-                            // Construct the output file path.
-                            let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
-
-                            let current_output_file_path_base = if is_encrypt {
-                                // For encryption, output name is input_filename.original_ext.encrypted
-                                // to ensure uniqueness if original extensions differ but stems are same,
-                                // or if different files have the same stem.
-                                // The final extension (.png or .txt) will be added by encrypt_image.
-                                let input_filename_complete_str = file_name_os_str.to_string_lossy();
-                                let new_base_name = format!("{}.encrypted", input_filename_complete_str);
-                                output_dir.join(new_base_name)
-                            } else {
-                                // For decryption, output name is input stem, extension auto-detected.
-                                let stem = current_input_file_path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("decrypted_file"));
-                                output_dir.join(stem)
-                            };
-
-                            print!("Processing {:?} -> {:?} (final extension will be .{} or auto-detected) ... ", 
-                                   current_input_file_path, 
-                                   current_output_file_path_base, 
-                                   if is_encrypt { output_format_preference } else { "auto" });
-
-                            // Perform encryption or decryption.
-                            let operation_result = if is_encrypt {
-                                // Ensure derived_key and salt_for_payload are available for encryption
-                                let key = derived_key_for_encryption.expect("Derived key missing for folder encryption");
-                                let salt = salt_for_encryption_payload.expect("Salt for payload missing for folder encryption");
-                                encrypt::encrypt_image_core( // Call encrypt_image_core
-                                    &current_input_file_path, 
-                                    &current_output_file_path_base, 
-                                    key, 
-                                    salt, 
-                                    output_format_preference, 
-                                    base_image_path_str_opt.map(Path::new), 
-                                    lsb_bits_for_encryption
-                                ).map(|_| ())
-                            } else {
-                                let secret = secret_for_decryption.expect("Secret missing for folder decryption");
-                                decrypt::decrypt_image(&current_input_file_path, &current_output_file_path_base, secret)
-                            };
-
-                            match operation_result {
-                                Ok(_) => {
-                                    // Message is printed by encrypt_image/decrypt_image or the print! above
-                                    // For successful decryption, the success message is in decrypt_image.
-                                    // For successful encryption, it's in encrypt_image.
-                                    // We add a simple "Done." here for folder mode.
-                                    println!("Done.");
-                                    files_processed_successfully += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!("\nError processing file {:?}: {}", current_input_file_path, e);
-                                    files_failed_to_process += 1;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading a directory entry: {}", e);
-                        files_failed_to_process += 1;
-                    }
-                }
-            }
-            println!("\nFolder processing summary:");
-            println!("  Files successfully processed: {}", files_processed_successfully);
-            println!("  Files failed to process: {}", files_failed_to_process);
-            if files_skipped_extension > 0 {
-                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
-            std::process::exit(1);
-        }
-    }
-}
 
 /// Main function: parses CLI arguments, validates them, prompts for secret,
 /// and dispatches to either single file processing or folder processing mode.
@@ -370,37 +215,19 @@ fn main() {
         }
 
         if is_encrypt {
-            let salt_for_folder = SaltString::generate(&mut OsRng);
-            match secret::derive_encryption_key_with_salt(&encryption_secret, &salt_for_folder) { // Changed from utils::
-                Ok(derived_key) => {
-                    process_folder_mode(
-                        input_arg_str, 
-                        output_arg_str, 
-                        is_encrypt, 
-                        None, // secret_for_decryption
-                        Some(&derived_key), // derived_key_for_encryption
-                        Some(&salt_for_folder), // salt_for_encryption_payload
-                        output_format_preference, 
-                        base_image_path_str_opt, 
-                        lsb_bits_for_encryption
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Error deriving key for folder encryption: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        } else { // Decryption mode for folder
-            process_folder_mode(
+            encrypt::process_folder_encryption( 
                 input_arg_str, 
                 output_arg_str, 
-                is_encrypt, 
-                Some(&encryption_secret), // secret_for_decryption
-                None, // derived_key_for_encryption
-                None, // salt_for_encryption_payload
-                output_format_preference, // Not used in decryption path of process_folder_mode
-                base_image_path_str_opt,  // Not used
-                lsb_bits_for_encryption   // Not used
+                &encryption_secret,
+                output_format_preference, 
+                base_image_path_str_opt, 
+                lsb_bits_for_encryption
+            );
+        } else { // Decryption mode for folder
+            decrypt::process_folder_decryption( 
+                input_arg_str, 
+                output_arg_str, 
+                &encryption_secret
             );
         }
     } else {

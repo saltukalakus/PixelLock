@@ -1,14 +1,93 @@
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
 use image::GenericImageView;
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}}; // Added fs and Path here for process_folder_decryption
 use argon2::password_hash::SaltString;
-use zeroize::Zeroizing;
+use zeroize::Zeroizing; // Added for process_folder_decryption
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
-use crate::secret::{derive_encryption_key_with_salt}; // Changed from crate::utils
+use crate::secret::{derive_encryption_key_with_salt}; 
 use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN};
+
+/// Processes all supported files in an input directory for decryption.
+pub fn process_folder_decryption(
+    input_dir_str: &str,
+    output_dir_str: &str,
+    secret: &Zeroizing<String>,
+) {
+    let input_dir = Path::new(input_dir_str);
+    let output_dir = Path::new(output_dir_str);
+
+    if !output_dir.exists() {
+        if let Err(e) = fs::create_dir_all(output_dir) {
+            eprintln!("Error: Could not create output directory '{}': {}", output_dir_str, e);
+            std::process::exit(1);
+        }
+        println!("Created output directory: {:?}", output_dir);
+    } else if !output_dir.is_dir() {
+        eprintln!("Error: Output path '{}' exists but is not a directory.", output_dir_str);
+        std::process::exit(1);
+    }
+
+    match fs::read_dir(input_dir) {
+        Ok(entries) => {
+            let mut files_processed_successfully = 0;
+            let mut files_failed_to_process = 0;
+            let mut files_skipped_extension = 0;
+            println!("\nStarting folder decryption...");
+
+            for entry_result in entries {
+                match entry_result {
+                    Ok(entry) => {
+                        let current_input_file_path = entry.path();
+                        if current_input_file_path.is_file() {
+                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            let lower_extension = extension.to_lowercase();
+
+                            if !(lower_extension == "txt" || lower_extension == "png") {
+                                files_skipped_extension += 1;
+                                continue;
+                            }
+
+                            let stem = current_input_file_path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("decrypted_file"));
+                            let current_output_file_path_base = output_dir.join(stem);
+
+                            print!("Decrypting {:?} -> {:?} (extension auto-detected) ... ",
+                                   current_input_file_path,
+                                   current_output_file_path_base);
+
+                            match decrypt_image(&current_input_file_path, &current_output_file_path_base, secret) { // Call local decrypt_image
+                                Ok(_) => {
+                                    println!("Done.");
+                                    files_processed_successfully += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("\nError decrypting file {:?}: {}", current_input_file_path, e);
+                                    files_failed_to_process += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading a directory entry: {}", e);
+                        files_failed_to_process += 1;
+                    }
+                }
+            }
+            println!("\nFolder decryption summary:");
+            println!("  Files successfully decrypted: {}", files_processed_successfully);
+            println!("  Files failed to decrypt: {}", files_failed_to_process);
+            if files_skipped_extension > 0 {
+                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
+            std::process::exit(1);
+        }
+    }
+}
 
 /// Extracts the raw encrypted data payload from the carrier file (either .txt or .png).
 ///
