@@ -8,6 +8,20 @@ mod error_types;
 mod encrypt; 
 mod decrypt; 
 
+const APP_VERSION_STR: &str = env!("CARGO_PKG_VERSION");
+
+/// Parses a version string (e.g., "1.0.0") into (major, minor, patch) u8 tuple.
+fn parse_version_to_bytes(version_str: &str) -> Result<(u8, u8, u8), String> {
+    let parts: Vec<&str> = version_str.split('.').collect();
+    if parts.len() != 3 {
+        return Err(format!("Version string '{}' is not in major.minor.patch format.", version_str));
+    }
+    let major = parts[0].parse::<u8>().map_err(|e| format!("Invalid major version '{}': {}", parts[0], e))?;
+    let minor = parts[1].parse::<u8>().map_err(|e| format!("Invalid minor version '{}': {}", parts[1], e))?;
+    let patch = parts[2].parse::<u8>().map_err(|e| format!("Invalid patch version '{}': {}", parts[2], e))?;
+    Ok((major, minor, patch))
+}
+
 /// Prompts the user for a secret (password) and validates it if in encryption mode.
 /// Uses `Zeroizing` to ensure the secret is cleared from memory when no longer needed.
 ///
@@ -71,7 +85,7 @@ fn validate_file_exists(file_path: &str) {
 /// * `Command` object for further processing (e.g., getting matches).
 fn build_cli_command() -> Command { // Renamed and changed return type
     Command::new("PixelLock")
-        .version("1.0")
+        .version(APP_VERSION_STR) // Use const for version
         .author("Saltuk Alakus")
         .about("\nPixelLock is a command-line tool to secure your pictures with military-grade encryption. 
                 \nIt helps enhance privacy and provide an additional layer of security while storing images.")
@@ -135,12 +149,19 @@ fn build_cli_command() -> Command { // Renamed and changed return type
         )
 }
 
-
 /// Main function: parses CLI arguments, validates them, prompts for secret,
 /// and dispatches to either single file processing or folder processing mode.
 fn main() {
     // Parse command-line arguments.
     let matches = build_cli_command().get_matches(); // Call get_matches here
+
+    let app_version_bytes = match parse_version_to_bytes(APP_VERSION_STR) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error parsing application version: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Extract operation mode and format preferences.
     let is_decrypt = matches.get_flag("decrypt");
@@ -221,20 +242,22 @@ fn main() {
                 &encryption_secret,
                 output_format_preference, 
                 base_image_path_str_opt, 
-                lsb_bits_for_encryption
+                lsb_bits_for_encryption,
+                app_version_bytes,
             );
         } else { // Decryption mode for folder
             decrypt::process_folder_decryption( 
                 input_arg_str, 
                 output_arg_str, 
-                &encryption_secret
+                &encryption_secret,
+                app_version_bytes,
             );
         }
     } else {
         // Input is a single file.
         validate_file_exists(input_arg_str); // Ensure input file exists.
         if is_encrypt {
-            match encrypt::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption) {
+            match encrypt::encrypt_image(input_arg_str, output_arg_str, &encryption_secret, output_format_preference, base_image_path_str_opt.map(Path::new), lsb_bits_for_encryption, app_version_bytes) {
                 Ok(_original_format) => { /* Success message printed by encrypt_image */ } 
                 Err(e) => {
                     eprintln!("Error encrypting file: {}", e);
@@ -242,7 +265,7 @@ fn main() {
                 }
             }
         } else if is_decrypt {
-            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret) { // Updated to decrypt::
+            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret, app_version_bytes) { // Updated to decrypt::
                 eprintln!("Error decrypting file: {}", e);
                 std::process::exit(1); // Exit on error for single file mode
             }

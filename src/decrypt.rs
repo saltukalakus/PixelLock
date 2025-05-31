@@ -8,13 +8,14 @@ use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
 use crate::secret::{derive_encryption_key_with_salt}; 
-use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN};
+use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN, VERSION_INFO_LEN};
 
 /// Processes all supported files in an input directory for decryption.
 pub fn process_folder_decryption(
     input_dir_str: &str,
     output_dir_str: &str,
     secret: &Zeroizing<String>,
+    app_version: (u8, u8, u8),
 ) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
@@ -57,13 +58,12 @@ pub fn process_folder_decryption(
                                    current_input_file_path,
                                    current_output_file_path_base);
 
-                            match decrypt_image(&current_input_file_path, &current_output_file_path_base, secret) { // Call local decrypt_image
+                            match decrypt_image(&current_input_file_path, &current_output_file_path_base, secret, app_version) { // Call local decrypt_image
                                 Ok(_) => {
                                     println!("Done.");
                                     files_processed_successfully += 1;
                                 }
-                                Err(e) => {
-                                    eprintln!("\nError decrypting file {:?}: {}", current_input_file_path, e);
+                                Err(_e) => { // Marked 'e' as unused
                                     files_failed_to_process += 1;
                                 }
                             }
@@ -102,12 +102,12 @@ fn extract_payload_from_carrier(
     input_encrypted_path: &Path,
     input_extension: &str,
 ) -> Result<Vec<u8>, CryptoImageError> {
-    if input_extension == "txt" {
+    if input_extension == "txt" { // Removed parentheses
         let encrypted_file_content = fs::read_to_string(input_encrypted_path)?;
         let payload = general_purpose::STANDARD.decode(encrypted_file_content.trim())?;
         println!("Decrypting from Base64 TXT file: {:?}", input_encrypted_path);
         Ok(payload)
-    } else if input_extension == "png" {
+    } else if input_extension == "png" { // Removed parentheses
         let carrier_image = image::open(input_encrypted_path)?;
         let (width, height) = carrier_image.dimensions();
         
@@ -337,6 +337,7 @@ fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
 /// * `input_encrypted_path_ref` - Path to the encrypted file (.txt or .png).
 /// * `output_decrypted_path_base` - Base path for the output decrypted file. The extension will be auto-detected.
 /// * `secret` - The user-provided secret (password) for decryption.
+/// * `current_app_version` - The version tuple (major, minor, patch) of the currently running application.
 ///
 /// # Returns
 /// * `Ok(())` on success.
@@ -345,6 +346,7 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     input_encrypted_path_ref: PIn,
     output_decrypted_path_base: POut,
     secret: &Zeroizing<String>,
+    current_app_version: (u8, u8, u8), // Added app_version parameter
 ) -> Result<(), CryptoImageError> {
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
     let input_extension = input_encrypted_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
@@ -352,11 +354,41 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     // Extract the payload
     let encrypted_file_data_payload = extract_payload_from_carrier(input_encrypted_path, &input_extension)?;
 
-    if encrypted_file_data_payload.len() < SALT_STRING_LEN + NONCE_STRING_LEN {
-        return Err(CryptoImageError::Decryption("Extracted encrypted data is too short".to_string()));
+    // Check minimum length: Version (3) + Salt (22) + Nonce (12)
+    if encrypted_file_data_payload.len() < VERSION_INFO_LEN + SALT_STRING_LEN + NONCE_STRING_LEN {
+        return Err(CryptoImageError::Decryption(format!(
+            "Extracted encrypted data is too short. Expected at least {} bytes, got {}.",
+            VERSION_INFO_LEN + SALT_STRING_LEN + NONCE_STRING_LEN,
+            encrypted_file_data_payload.len()
+        )));
     }
-    let (salt_string_bytes, rest) = encrypted_file_data_payload.split_at(SALT_STRING_LEN);
-    let (nonce_bytes, ciphertext) = rest.split_at(NONCE_STRING_LEN);
+
+    let (version_bytes, rest_after_version) = encrypted_file_data_payload.split_at(VERSION_INFO_LEN);
+    let stored_version = (version_bytes[0], version_bytes[1], version_bytes[2]);
+
+    // Optional: Log or compare versions
+    if stored_version == current_app_version {
+        println!(
+            "File encrypted with version: {}.{}.{}. Current app version: {}.{}.{}",
+            stored_version.0, stored_version.1, stored_version.2,
+            current_app_version.0, current_app_version.1, current_app_version.2
+        );
+    } else {
+        // ANSI escape codes for red text
+        const RED: &str = "\x1b[31m";
+        const RESET: &str = "\x1b[0m";
+        println!(
+            "{}File encrypted with version: {}.{}.{}. Current app version: {}.{}.{}. Version mismatch.{}",
+            RED,
+            stored_version.0, stored_version.1, stored_version.2,
+            current_app_version.0, current_app_version.1, current_app_version.2,
+            RESET
+        );
+    }
+    // TODO: Add compatibility logic based on version if needed in the future.
+
+    let (salt_string_bytes, rest_after_salt) = rest_after_version.split_at(SALT_STRING_LEN);
+    let (nonce_bytes, ciphertext) = rest_after_salt.split_at(NONCE_STRING_LEN);
 
     let salt_str = std::str::from_utf8(salt_string_bytes)?;
     let salt = SaltString::from_b64(salt_str)?;

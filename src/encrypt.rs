@@ -11,8 +11,17 @@ use crate::error_types::CryptoImageError;
 use crate::secret::{derive_encryption_key_with_salt}; 
 
 // Define constants here
+pub const VERSION_INFO_LEN: usize = 3; // Major, Minor, Patch
 pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; 
+
+/// Configuration for the core encryption logic.
+pub struct EncryptionCoreConfig<'a, P: AsRef<Path> + std::fmt::Debug> { // Changed to pub struct
+    output_format_preference: &'a str,
+    base_image_path_opt: Option<P>,
+    lsb_bits_per_channel: u8,
+    app_version: (u8, u8, u8),
+}
 
 /// Prepares or creates a carrier RgbImage for steganography.
 ///
@@ -116,15 +125,18 @@ fn prepare_carrier_image<P: AsRef<Path> + std::fmt::Debug>(
 
 /// Core encryption logic using a pre-derived key and salt.
 /// This function is intended for use when the key and salt are managed externally (e.g., folder mode).
-pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fmt::Debug, P3: AsRef<Path> + std::fmt::Debug>(
+pub fn encrypt_image_core<P1, P2, P3>(
     input_image_path: P1,
     output_encrypted_path_param: P2,
     derived_key: &[u8; 32], // Accepts pre-derived key
     salt_for_payload: &SaltString, // Accepts salt used for derivation, to be stored
-    output_format_preference: &str,
-    base_image_path_opt: Option<P3>,
-    lsb_bits_per_channel: u8, 
-) -> Result<String, CryptoImageError> {
+    config: &EncryptionCoreConfig<P3>, // Changed to use config struct
+) -> Result<String, CryptoImageError>
+where
+    P1: AsRef<Path> + std::fmt::Debug,
+    P2: AsRef<Path> + std::fmt::Debug,
+    P3: AsRef<Path> + std::fmt::Debug,
+{
     let original_format_str = input_image_path
         .as_ref()
         .extension()
@@ -146,19 +158,22 @@ pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + s
     assert_eq!(salt_bytes_to_store.len(), SALT_STRING_LEN, "Provided salt string length does not match expected SALT_STRING_LEN.");
 
     let mut raw_output_payload = Vec::new();
+    raw_output_payload.push(config.app_version.0); // Major
+    raw_output_payload.push(config.app_version.1); // Minor
+    raw_output_payload.push(config.app_version.2); // Patch
     raw_output_payload.extend_from_slice(salt_bytes_to_store);
     raw_output_payload.extend_from_slice(&nonce_bytes);
     raw_output_payload.extend_from_slice(&encrypted_data_core);
     
     let output_path_base = PathBuf::from(output_encrypted_path_param.as_ref());
 
-    if output_format_preference == "txt" {
+    if config.output_format_preference == "txt" {
         let base64_encoded_data = general_purpose::STANDARD.encode(&raw_output_payload);
         let final_output_path = output_path_base.with_extension("txt");
         fs::write(&final_output_path, base64_encoded_data)?;
         println!("Image encrypted successfully to (Base64 TXT): {:?}", final_output_path);
-    } else if output_format_preference == "png" {
-        let lsb_config_byte = lsb_bits_per_channel; 
+    } else if config.output_format_preference == "png" {
+        let lsb_config_byte = config.lsb_bits_per_channel; 
         let payload_len_bytes = (raw_output_payload.len() as u32).to_be_bytes();
 
         let mut header_to_embed = vec![lsb_config_byte];
@@ -169,7 +184,7 @@ pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + s
 
         let lsb_for_header: u8 = 1;
         let bits_per_pixel_header = 3 * lsb_for_header as usize;
-        let bits_per_pixel_payload = 3 * lsb_bits_per_channel as usize;
+        let bits_per_pixel_payload = 3 * config.lsb_bits_per_channel as usize;
 
         if bits_per_pixel_payload == 0 {
             return Err(CryptoImageError::InvalidParameter("LSB bits per channel for payload cannot be zero.".to_string()));
@@ -180,7 +195,8 @@ pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + s
         let pixels_needed = pixels_needed_for_header + pixels_needed_for_payload;
 
         // Prepare or create the carrier image using the helper function.
-        let mut carrier_image = prepare_carrier_image(base_image_path_opt, pixels_needed)?;
+        // Pass Option<&P3> by using .as_ref() to avoid moving from behind a shared reference.
+        let mut carrier_image = prepare_carrier_image(config.base_image_path_opt.as_ref(), pixels_needed)?;
         
         let (img_width, img_height) = carrier_image.dimensions();
         
@@ -222,7 +238,7 @@ pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + s
                     let (active_data_source, active_lsb_bits, active_total_bits) = if embedding_header {
                         (&header_to_embed, lsb_for_header, total_header_bits)
                     } else {
-                        (&raw_output_payload, lsb_bits_per_channel, total_payload_bits)
+                        (&raw_output_payload, config.lsb_bits_per_channel, total_payload_bits)
                     };
 
                     if bit_idx_overall >= active_total_bits { 
@@ -291,7 +307,7 @@ pub fn encrypt_image_core<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + s
         carrier_image.save(&final_output_path)?;
         println!("Image encrypted successfully to (Steganography PNG): {:?}", final_output_path);
     } else {
-        return Err(CryptoImageError::InvalidParameter(format!("Unsupported output format: {}", output_format_preference)));
+        return Err(CryptoImageError::InvalidParameter(format!("Unsupported output format: {}", config.output_format_preference)));
     }
 
     Ok(original_format_str)
@@ -306,11 +322,19 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
     output_format_preference: &str,
     base_image_path_opt: Option<P3>,
     lsb_bits_per_channel: u8, 
+    app_version: (u8, u8, u8),
 ) -> Result<String, CryptoImageError> {
     // Generate a new random salt for Argon2.
     let new_salt = SaltString::generate(&mut OsRng);
     // Derive the encryption key from the secret and salt using Argon2.
     let derived_key = derive_encryption_key_with_salt(secret, &new_salt)?;
+
+    let core_config = EncryptionCoreConfig {
+        output_format_preference,
+        base_image_path_opt,
+        lsb_bits_per_channel,
+        app_version,
+    };
 
     // Call the core encryption logic with the derived key and new salt.
     encrypt_image_core(
@@ -318,20 +342,20 @@ pub fn encrypt_image<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::f
         output_encrypted_path_param,
         &derived_key,
         &new_salt,
-        output_format_preference,
-        base_image_path_opt,
-        lsb_bits_per_channel,
+        &core_config,
     )
 }
 
 /// Processes all supported files in an input directory for encryption.
+/// Uses a single derived key and salt for all files in the folder.
 pub fn process_folder_encryption(
     input_dir_str: &str,
     output_dir_str: &str,
-    encryption_secret: &Zeroizing<String>, // Changed: Takes secret directly
+    encryption_secret: &Zeroizing<String>,
     output_format_preference: &str,
     base_image_path_str_opt: Option<&String>, // Note: This is &String, consider if &Path or String is better
     lsb_bits: u8,
+    app_version: (u8, u8, u8), // Added app_version parameter
 ) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
@@ -393,14 +417,19 @@ pub fn process_folder_encryption(
                             // Pass base_image_path_str_opt by mapping &String to &Path
                             let base_path_for_core = base_image_path_str_opt.map(|s| Path::new(s.as_str()));
 
-                            match encrypt_image_core( // Calling self::encrypt_image_core
+                            let core_config = EncryptionCoreConfig {
+                                output_format_preference,
+                                base_image_path_opt: base_path_for_core,
+                                lsb_bits_per_channel: lsb_bits,
+                                app_version,
+                            };
+
+                            match encrypt_image_core(
                                 &current_input_file_path,
                                 &current_output_file_path_base,
                                 &derived_key, // Use the key derived above
                                 &salt_for_folder, // Use the salt generated above
-                                output_format_preference,
-                                base_path_for_core, // Pass the mapped &Path
-                                lsb_bits,
+                                &core_config,
                             ) {
                                 Ok(_) => {
                                     println!("Done.");
@@ -551,6 +580,7 @@ mod tests {
         let secret = Zeroizing::new("supersecretpassword123!@#".to_string());
         let output_format_preference = "txt";
         let lsb_bits: u8 = 1;
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         encrypt_image(
             &input_image_path,
@@ -559,6 +589,7 @@ mod tests {
             output_format_preference,
             None::<PathBuf>,
             lsb_bits,
+            app_version_for_test, 
         )?;
 
         let encrypted_file_with_ext = encrypted_path.with_extension("txt");
@@ -568,6 +599,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
         
         let decrypted_data_content = fs::read(&decrypted_path)?;
@@ -592,6 +624,7 @@ mod tests {
         let secret = Zeroizing::new("anotherStrongPassword!$5^".to_string());
         let output_format_preference = "png";
         let lsb_bits: u8 = 2;
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         let original_input_format = encrypt_image(
             &input_image_path,
@@ -600,6 +633,7 @@ mod tests {
             output_format_preference,
             None::<PathBuf>,
             lsb_bits,
+            app_version_for_test, 
         )?;
         assert_eq!(original_input_format, "png");
 
@@ -610,6 +644,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
 
         let decrypted_file_with_ext = decrypted_path_base.with_extension("png");
@@ -637,6 +672,7 @@ mod tests {
         let secret = Zeroizing::new("passwordForStegWithBase123$%^".to_string());
         let output_format_preference = "png";
         let lsb_bits: u8 = 3;
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         encrypt_image(
             &input_image_path,
@@ -645,6 +681,7 @@ mod tests {
             output_format_preference,
             Some(&base_image_path),
             lsb_bits,
+            app_version_for_test, 
         )?;
 
         let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
@@ -654,6 +691,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
         
         assert!(decrypted_path_base.exists(), "Decrypted file (with base) should exist.");
@@ -676,6 +714,7 @@ mod tests {
         let secret = Zeroizing::new("TestSecretForEmptyFile1!".to_string());
         let output_format = "txt";
         let lsb_bits = 1; // Not used for txt
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         encrypt_image(
             &input_file_path,
@@ -684,6 +723,7 @@ mod tests {
             output_format,
             None::<PathBuf>, // No base image
             lsb_bits,
+            app_version_for_test, 
         )?;
 
         let encrypted_file_with_ext = encrypted_path_base.with_extension("txt");
@@ -693,6 +733,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
         
         // For empty file, decrypted output path might not have an extension if detect_file_format returns None
@@ -718,6 +759,7 @@ mod tests {
         // When no base image, lsb_bits is effectively 8, but the param is passed.
         // The actual lsb_bits_per_channel used for embedding is 8.
         let lsb_bits_param = 8; 
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         encrypt_image(
             &input_file_path,
@@ -726,10 +768,11 @@ mod tests {
             output_format,
             None::<PathBuf>, // No base image
             lsb_bits_param,
+            app_version_for_test, 
         )?;
 
         let encrypted_file_with_ext = encrypted_path_base.with_extension("png");
-        assert!(encrypted_file_with_ext.exists());
+        assert!(encrypted_file_with_ext.exists(), "Encrypted PNG file should exist.");
 
         // Check carrier image size for empty payload (salt + nonce + 0 bytes data)
         // Header (5 bytes) + Salt (22 bytes) + Nonce (12 bytes) = 39 bytes
@@ -745,6 +788,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
         
         let decrypted_data = fs::read(&decrypted_path_base)?;
@@ -772,6 +816,7 @@ mod tests {
         let secret = Zeroizing::new("TinyCarrierTestSecret1!".to_string());
         let output_format = "png";
         let lsb_bits = 1; // 1 LSB per channel
+        let app_version_for_test = (1,0,0); // Example app_version for tests
 
         // Encrypt_image should succeed by tiling the small base image.
         let result = encrypt_image(
@@ -781,6 +826,7 @@ mod tests {
             output_format,
             Some(&base_image_path),
             lsb_bits,
+            app_version_for_test, 
         );
         assert!(result.is_ok(), "Encryption should succeed by tiling the small base image. Error: {:?}", result.err());
 
@@ -812,6 +858,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
+            app_version_for_test, // Added app_version
         )?;
 
         let decrypted_data_content = fs::read(&decrypted_path_base)?;
