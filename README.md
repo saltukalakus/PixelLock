@@ -31,7 +31,7 @@ Requirements
    cargo build --release
    ```
 
-These steps generate the executable **PixelLock** in the `/target/release` directory.
+These steps generate the executable **PixelLock** in the `/target/release` directory. I have used a Mac M2 Pro for testing. If you experience any issues on other hardware or operating systems, please open an issue.
 
 ## 🪄 Usage 🪄
 
