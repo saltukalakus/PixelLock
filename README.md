@@ -1,5 +1,7 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.png)
 
+[![Rust CI](https://github.com/saltukalakus/PixelLock/actions/workflows/rust.yml/badge.svg)](https://github.com/saltukalakus/PixelLock/actions/workflows/rust.yml)
+
 ##
 
 PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images. 
