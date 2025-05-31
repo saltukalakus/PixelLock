@@ -219,13 +219,13 @@ fn test_single_file_png_no_base() {
 #[test]
 fn test_single_file_png_with_base_ratios() {
     let base_image_path = get_base_image_path();
-    if (!base_image_path.exists()) {
+    if !base_image_path.exists() {
         panic!("Base image {:?} not found. Cannot run steganography tests. Ensure your test_image.* files are small to prevent timeouts.", base_image_path);
     }
 
     for image_spec in TEST_IMAGES {
         let original_image_path = get_test_image_path(image_spec);
-        if (!original_image_path.exists()) {
+        if !original_image_path.exists() {
             eprintln!("Skipping test for {:?} (ratio loop): Original image not found.", original_image_path);
             continue;
         }

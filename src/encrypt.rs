@@ -266,12 +266,7 @@ where
                         actual_data_extract_mask = (1 << active_lsb_bits) - 1;
                     } else {
                         // Should not happen given current logic (lsb_for_header=1, lsb_bits_per_channel=1-4 or 8)
-                        // but as a fallback, treat as no-op or error.
-                        // For safety, let's assume it means 0 bits, effectively a no-op on this channel.
-                        actual_clear_mask = 0xFF; 
-                        actual_data_extract_mask = 0x00;
-                        // Or, return an error:
-                        // return Err(CryptoImageError::InvalidParameter(format!("Invalid active_lsb_bits: {}", active_lsb_bits)));
+                        return Err(CryptoImageError::InvalidParameter(format!("Invalid active_lsb_bits: {}", active_lsb_bits)));
                     }
 
 
@@ -355,7 +350,7 @@ pub fn process_folder_encryption(
     output_format_preference: &str,
     base_image_path_str_opt: Option<&String>, // Note: This is &String, consider if &Path or String is better
     lsb_bits: u8,
-    app_version: (u8, u8, u8), // Added app_version parameter
+    app_version: (u8, u8, u8),
 ) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
@@ -479,7 +474,7 @@ mod tests {
     use zeroize::Zeroizing;
     use crate::decrypt::decrypt_image; 
     use crate::error_types::CryptoImageError;
-    use image::{RgbImage, ImageFormat, GenericImageView}; // Added GenericImageView
+    use image::{RgbImage, ImageFormat, GenericImageView};
 
     // Helper function to create a dummy PNG file for testing base image functionality.
     fn create_dummy_png(path: &Path, width: u32, height: u32) -> Result<(), CryptoImageError> {
@@ -606,7 +601,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
         
         let decrypted_data_content = fs::read(&decrypted_path)?;
@@ -651,7 +646,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
 
         let decrypted_file_with_ext = decrypted_path_base.with_extension("png");
@@ -698,7 +693,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
         
         assert!(decrypted_path_base.exists(), "Decrypted file (with base) should exist.");
@@ -740,7 +735,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
         
         // For empty file, decrypted output path might not have an extension if detect_file_format returns None
@@ -795,7 +790,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
         
         let decrypted_data = fs::read(&decrypted_path_base)?;
@@ -865,7 +860,7 @@ mod tests {
             &encrypted_file_with_ext,
             &decrypted_path_base,
             &secret,
-            app_version_for_test, // Added app_version
+            app_version_for_test,
         )?;
 
         let decrypted_data_content = fs::read(&decrypted_path_base)?;

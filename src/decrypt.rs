@@ -1,9 +1,9 @@
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
 use image::GenericImageView;
-use std::{fs, path::{Path, PathBuf}}; // Added fs and Path here for process_folder_decryption
+use std::{fs, path::{Path, PathBuf}};
 use argon2::password_hash::SaltString;
-use zeroize::Zeroizing; // Added for process_folder_decryption
+use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::error_types::CryptoImageError;
@@ -366,7 +366,7 @@ pub fn decrypt_image<PIn: AsRef<Path> + std::fmt::Debug, POut: AsRef<Path> + std
     input_encrypted_path_ref: PIn,
     output_decrypted_path_base: POut,
     secret: &Zeroizing<String>,
-    current_app_version: (u8, u8, u8), // Added app_version parameter
+    current_app_version: (u8, u8, u8),
 ) -> Result<(), CryptoImageError> {
     let input_encrypted_path = input_encrypted_path_ref.as_ref();
     let input_extension = input_encrypted_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
@@ -627,22 +627,10 @@ mod tests {
 
         let mut header_to_embed = vec![lsb_config];
         header_to_embed.extend_from_slice(&claimed_payload_len.to_be_bytes());
-        
-        // Image size: 5x5 = 25 pixels.
-        // Header needs 14 pixels. Remaining 11 pixels.
-        // 11 pixels * 3 channels/pixel * 1 bit/channel = 33 bits = 4 bytes for payload.
-        // This is less than `claimed_payload_len`.
-        // We use the helper, but the helper will embed `actual_payload_data`.
-        // The extraction logic should read the `claimed_payload_len` from the header.
-        // The helper needs to be adjusted or a more manual PNG created for this specific case.
-        // For now, let's test the scenario where the header is read correctly, but then extraction fails.
-        // The current `create_steganographic_png_for_test` embeds the *actual* payload length.
-        // To test this properly, we'd need to craft a PNG where the *embedded header* has a large length,
-        // but the image itself is small.
 
-        // Simplified: create an image that can hold the header, but not the claimed payload.
+        // Image needs to be large enough for the header (5 bytes, 1 LSB/channel) -> 14 pixels.
         // Header (5 bytes, 1 LSB/channel) -> 14 pixels.
-        // Let's make an image of 5x3=15 pixels. It can hold the header.
+        // Make an image of 5x3=15 pixels. It can hold the header.
         // If header says payload is 1000 bytes, it will fail.
         let mut carrier_image = RgbImage::new(5, 3); // 15 pixels
         for pixel in carrier_image.pixels_mut() { *pixel = image::Rgb([0,0,0]); }
