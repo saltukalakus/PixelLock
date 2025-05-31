@@ -79,6 +79,16 @@ Output
 > PixelLock --help  
 ```
 
+## 🧪 Running Tests 🧪
+
+To run end-to-end tests execute the `cargo test` command in the project root director. 
+
+```bash
+> cargo test  
+```
+The tests in the `./tests` folder create unique temporary subdirectories under `./tests/tmp/` for their output. Each specific test operation (e.g., for a particular image and settings) will ensure its output subdirectory is cleared before it runs, providing a clean environment for that operation's artifacts. The `./tests/tmp/` directory itself will contain these subdirectories, which are not deleted after the entire test suite finishes, allowing for inspection of outputs.
+
+
 ## 💥 Security Challenge 💥
 
 This is an open challenge for those interested in bug bounties. Find a way to decrypt the secret images in this [Gist](https://gist.github.com/saltukalakus/3ed86910ea2eee6c6e72f8def4c6017c). If you can decrypt at least one of the images, you win 500 GBP 💰 

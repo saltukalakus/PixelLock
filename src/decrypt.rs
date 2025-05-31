@@ -318,6 +318,19 @@ fn extract_payload_from_carrier(
 /// * `Some(&'static str)` containing the file extension (e.g., "jpeg", "png") if a known format is detected.
 /// * `None` if the format is not recognized.
 fn detect_file_format(decrypted_data: &[u8]) -> Option<&'static str> {
+    // --- BEGIN ADDED DEBUGGING ---
+    let max_bytes_to_print = std::cmp::min(decrypted_data.len(), 16); // Print up to 16 bytes
+    println!(
+        "DEBUG detect_file_format: First {} bytes (hex): {:?}",
+        max_bytes_to_print,
+        &decrypted_data[..max_bytes_to_print]
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<String>>()
+            .join(" ")
+    );
+    // --- END ADDED DEBUGGING ---
+
     if decrypted_data.starts_with(&[0xFF, 0xD8, 0xFF]) { // JPEG
         Some("jpeg")
     } else if decrypted_data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) { // PNG

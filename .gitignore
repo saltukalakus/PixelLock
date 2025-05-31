@@ -19,3 +19,6 @@ target/
 
 .DS_Store
 .vscode/
+
+# Ignore test output files
+/tests/tmp/
