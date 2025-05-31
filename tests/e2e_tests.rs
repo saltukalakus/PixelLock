@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const PIXELLOCK_EXE: &str = env!("CARGO_BIN_EXE_PixelLock");
-const TEST_IMAGES_DIR: &str = "./tests/images";
+const TEST_FILES_DIR: &str = "./tests/files";
 const BASE_IMAGE_NAME: &str = "base_image.png";
 const TEST_PASSWORD: &str = "TestPassword123!@#$"; // Meets complexity requirements
 
@@ -88,11 +88,11 @@ fn setup_test_environment(path_parts: &[&str]) -> PathBuf {
 }
 
 fn get_test_file_path(file_spec: &TestFiles) -> PathBuf {
-    PathBuf::from(TEST_IMAGES_DIR).join(format!("{}.{}", file_spec.name, file_spec.extension))
+    PathBuf::from(TEST_FILES_DIR).join(format!("{}.{}", file_spec.name, file_spec.extension))
 }
 
 fn get_base_image_path() -> PathBuf {
-    PathBuf::from(TEST_IMAGES_DIR).join(BASE_IMAGE_NAME)
+    PathBuf::from(TEST_FILES_DIR).join(BASE_IMAGE_NAME)
 }
 
 // --- Single File Tests ---
@@ -225,13 +225,13 @@ fn test_single_file_png_no_base() {
 #[test]
 fn test_single_file_png_with_base_ratios() {
     let base_image_path = get_base_image_path();
-    if (!base_image_path.exists()) {
+    if !base_image_path.exists() {
         panic!("Base image {:?} not found. Cannot run steganography tests. Ensure your test_image.* files are small to prevent timeouts.", base_image_path);
     }
 
     for file_spec in TEST_FILES {
         let original_file_path = get_test_file_path(file_spec);
-        if (!original_file_path.exists()) {
+        if !original_file_path.exists() {
             eprintln!("Skipping test for {:?} (ratio loop): Original file not found.", original_file_path);
             continue;
         }
@@ -293,7 +293,7 @@ fn test_folder_mode_generic(
     base_image_opt: Option<&PathBuf>,
     ratio_opt: Option<u8>
 ) {
-    let input_folder_path = PathBuf::from(TEST_IMAGES_DIR);
+    let input_folder_path = PathBuf::from(TEST_FILES_DIR);
     // test_output_dir is already the unique base for this test run (e.g., ./tests/tmp/test_folder_mode_txt_format/)
     let encrypted_output_folder = test_output_dir.join("encrypted_folder_output");
     fs::create_dir_all(&encrypted_output_folder).unwrap();

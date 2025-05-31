@@ -13,6 +13,7 @@ clap = "4.5.4"
 rpassword = "7.4" 
 zeroize = { version = "1.8.1", features = ["alloc"] }
 base64 = "0.22.1"
+file-format = "0.27.0" 
 
 [dev-dependencies]
 tempfile = "3.10.1"

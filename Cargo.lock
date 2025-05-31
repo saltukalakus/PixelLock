@@ -10,6 +10,7 @@ dependencies = [
  "argon2",
  "base64",
  "clap",
+ "file-format",
  "image",
  "rand",
  "rpassword",
@@ -469,6 +470,12 @@ checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
 ]
+
+[[package]]
+name = "file-format"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ff8badf6e72ff15e42c9ade15d01375837173b17d10c228ab41d821082619db"
 
 [[package]]
 name = "flate2"

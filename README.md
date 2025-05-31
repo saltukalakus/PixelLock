@@ -6,13 +6,11 @@
 
 PixelLock is a command-line tool to secure your files with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing your sensitive files. 
 
-Any file can be secured with PixelLock. Most popular file formats are natively supported by file introspection. PixelLock falls back to using file extension as source of truth if the format is not recognized.
+Any file can be secured with PixelLock. Most file types are supported by file format detection. PixelLock falls back to using file extension name as source of truth if the format is not recognized.
 
-The tool allows you to generate encrypted files in two different formats: Base64 text or a PNG image. 
+The tool allows generating encrypted files in two different formats: Base64 text or a PNG image. 
 
-You may optionally pass a PNG formatted base image to hide your encrypted file in it if the output format is selected as PNG. 
-
-When the carrier base image is provided, the tool allows configuring the blending ratio to adjust the image distortion level vs the output file size. If the carrier image file size isn't sufficient the tool automatically tiles it to enlarge the base.
+You may optionally pass a PNG-formatted carrier base image to hide your encrypted file in it. When the base image is provided, the tool allows configuring the blending ratio to adjust the output image distortion level vs the final image size. If the base image size isn't sufficient to hide your secret file, PixelLock automatically tiles it to enlarge the base image.
 
 Feel free to open any feature requests in the issues section. Please check existing open issues before opening a new one. Also don't forget to ⭐️ the project if you find it useful 🤩
 

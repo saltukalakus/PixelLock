@@ -107,7 +107,7 @@ fn build_cli_command() -> Command {
         .version(APP_VERSION_STR) // Use const for version
         .author("Saltuk Alakus")
         .about("\nPixelLock is a command-line tool to secure your files (images and other types) with military-grade encryption. 
-                \nIt helps enhance privacy and provide an additional layer of security while storing files.")
+                \nIt helps enhance privacy and provide an additional layer of security while storing your sensitive files.")
         // Mode arguments: encrypt or decrypt.
         .arg(
             Arg::new("decrypt")
