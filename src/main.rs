@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command};
 use rpassword::read_password;
 use zeroize::Zeroizing;
 
-mod secret; // Changed from mod utils;
+mod secret;
 mod error_types; 
 mod encrypt; 
 mod decrypt; 
@@ -40,7 +40,7 @@ fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
             let secret1_plain = read_password().expect("Failed to read secret");
 
             // Validate complexity for new secrets.
-            match secret::validate_password_complexity(&secret1_plain) { // Changed from utils::
+            match secret::validate_password_complexity(&secret1_plain) {
                 Ok(_) => { /* Password is complex enough */ }
                 Err(e) => {
                     eprintln!("Error: {}", e); // Print the specific complexity error
@@ -83,7 +83,7 @@ fn validate_file_exists(file_path: &str) {
 ///
 /// # Returns
 /// * `Command` object for further processing (e.g., getting matches).
-fn build_cli_command() -> Command { // Renamed and changed return type
+fn build_cli_command() -> Command {
     Command::new("PixelLock")
         .version(APP_VERSION_STR) // Use const for version
         .author("Saltuk Alakus")
@@ -265,7 +265,7 @@ fn main() {
                 }
             }
         } else if is_decrypt {
-            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret, app_version_bytes) { // Updated to decrypt::
+            if let Err(e) = decrypt::decrypt_image(input_arg_str, output_arg_str, &encryption_secret, app_version_bytes) {
                 eprintln!("Error decrypting file: {}", e);
                 std::process::exit(1); // Exit on error for single file mode
             }

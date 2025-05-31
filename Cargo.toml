@@ -2,6 +2,7 @@
 name = "PixelLock"
 version = "1.0.0"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 argon2 = { version = "0.5.3", features = ["password-hash"] }

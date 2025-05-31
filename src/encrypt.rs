@@ -16,7 +16,7 @@ pub const SALT_STRING_LEN: usize = 22;
 pub const NONCE_STRING_LEN: usize = 12; 
 
 /// Configuration for the core encryption logic.
-pub struct EncryptionCoreConfig<'a, P: AsRef<Path> + std::fmt::Debug> { // Changed to pub struct
+pub struct EncryptionCoreConfig<'a, P: AsRef<Path> + std::fmt::Debug> {
     output_format_preference: &'a str,
     base_image_path_opt: Option<P>,
     lsb_bits_per_channel: u8,
@@ -130,7 +130,7 @@ pub fn encrypt_image_core<P1, P2, P3>(
     output_encrypted_path_param: P2,
     derived_key: &[u8; 32], // Accepts pre-derived key
     salt_for_payload: &SaltString, // Accepts salt used for derivation, to be stored
-    config: &EncryptionCoreConfig<P3>, // Changed to use config struct
+    config: &EncryptionCoreConfig<P3>,
 ) -> Result<String, CryptoImageError>
 where
     P1: AsRef<Path> + std::fmt::Debug,

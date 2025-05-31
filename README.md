@@ -10,9 +10,7 @@ The tool allows you to generate encrypted files in two different formats: Base64
 
 You may optionally pass a PNG formatted base image to hide your encrypted image in it if the output format is selected as PNG. When the base image is provided the tool allows configuring the blending ratio to decide the final generated picture distortion level vs the output file size.
 
-You may open any feature requests in the issues section. Please check existing open issues before opening a new one. 
-
-Also don't forget to ⭐️ the project if you find it useful 🤩
+Feel free to open any feature requests in the issues section. Please check existing open issues before opening a new one. Also don't forget to ⭐️ the project if you find it useful 🤩
 
 ![Flow](https://github.com/saltukalakus/PixelLock/blob/main/Flow.png)
 
