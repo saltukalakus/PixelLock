@@ -87,7 +87,7 @@ This is an open challenge for those interested in bug bounties. Find a way to de
 
 The challenge is time-boxed. It will end on July 31, 2025, at 1 PM UTC. I will share the secret in the same Gist in the comments section if no one can hack it by then. All the other details are in the Gist including the terms and conditions.
 
-To the best of my knowledge, the security choices and the used libraries in this project are solid. If you are able to break it you should be a security 🧙‍♂️
+To the best of my knowledge, the security choices and the libraries used in this project are solid. If you are able to break it, you must be a real 🧙‍♂️.
 
 ## 👩‍⚖️ Disclaimer 👨‍⚖️
 
