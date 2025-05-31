@@ -1,6 +1,6 @@
 ![PixelLock](https://github.com/saltukalakus/PixelLock/blob/main/PixelLock.png)
 
-# 🔑 PixelLock 🔓
+##
 
 PixelLock is a command-line tool to secure your pictures with military-grade encryption. It helps enhance privacy and provide an additional layer of security while storing images. 
 
@@ -27,32 +27,50 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 ## 🪄 Usage 🪄
 
-Encrypting a single image, embedding it into a provided base PNG:
+* Encrypting a single image, embedding it into a provided base PNG:
 ```bash
-./target/release/PixelLock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
+> PixelLock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
 # Output will be ./stego_image.png (using my_base.png as a carrier, 1 LSB)
 ```
 
-Decrypting a steganographic PNG image to reveal the secret image:
+* Decrypting a steganographic PNG image to reveal the secret image:
 ```bash
-./target/release/PixelLock -d -i ./stego_image.png -o ./secret_image
+> PixelLock -d -i ./stego_image.png -o ./secret_image
 # Output extension will be based on detected original format, e.g., ./secret_image.jpeg
 ```
 
-Encrypting all images in a folder, embedding them into a provided base PNG:
+* Encrypting all images in a folder, embedding them into a provided base PNG:
 ```bash
-./target/release/PixelLock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
+> PixelLock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
+
+Input
+ ├── img-folder
+     └── Image1.jpg
+     └── Image2.png
+Output
+ ├── stego_folder
+     └── Image1.jpg.png
+     └── Image2.png.png
 ```
 
-Decrypting all steganographic PNG images in a folder to an output folder:
+* Decrypting all steganographic PNG images in a folder to an output folder:
 ```bash
-./target/release/PixelLock -d -i ./stego_folder -o ./image-folder
+> PixelLock -d -i ./stego_folder -o ./image-folder
+
+Input
+ ├── stego_folder
+     └── Image1.jpg.png
+     └── Image2.png.png
+Output
+ ├── img-folder
+     └── Image1.jpg
+     └── Image2.png
 ```
 
-For a full list of available options, try the help command 📖 :
+*  📖 For a full list of available options, try the help command:
 
 ```bash
-./target/release/PixelLock --help  
+PixelLock --help  
 ```
 
 ## 💥 Security Challenge 💥
