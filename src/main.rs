@@ -28,11 +28,30 @@ fn parse_version_to_bytes(version_str: &str) -> Result<(u8, u8, u8), String> {
 /// # Arguments
 /// * `is_encryption_mode` - `true` if called during encryption (requires confirmation and complexity check),
 ///   `false` if called during decryption (prompts once).
+/// * `cli_password_opt` - An optional password string provided via CLI.
 ///
 /// # Returns
 /// * A `Zeroizing<String>` containing the user's secret.
-fn prompt_and_validate_secret(is_encryption_mode: bool) -> Zeroizing<String> {
-    if is_encryption_mode { // Removed parentheses
+fn prompt_and_validate_secret(is_encryption_mode: bool, cli_password_opt: Option<String>) -> Zeroizing<String> {
+    if let Some(cli_password) = cli_password_opt {
+        if is_encryption_mode {
+            // Validate complexity for new secrets even if provided via CLI.
+            match secret::validate_password_complexity(&cli_password) {
+                Ok(_) => { /* Password is complex enough */ }
+                Err(e) => {
+                    eprintln!("Error: Password provided via -p/--password is not complex enough: {}", e);
+                    eprintln!("Please ensure the password meets all complexity requirements.");
+                    std::process::exit(1); // Exit if CLI password for encryption is not complex.
+                }
+            }
+        }
+        // Use the password from CLI directly.
+        // No confirmation prompt needed for CLI-provided password.
+        return Zeroizing::new(cli_password);
+    }
+
+    // Original interactive prompting logic if no CLI password is provided.
+    if is_encryption_mode {
         // Encryption mode: prompt for new secret, validate complexity, and confirm.
         loop {
             print!("Enter your new secret: ");
@@ -147,6 +166,15 @@ fn build_cli_command() -> Command {
                 .required(false)
                 .help("LSB ratio (1-4) for steganography when using a base image (-b). Higher means more data per pixel.")
         )
+        // Password argument
+        .arg(
+            Arg::new("password")
+                .short('p')
+                .long("password")
+                .value_parser(clap::value_parser!(String))
+                .required(false)
+                .help("Provide the password directly. If not set, you will be prompted interactively. Use with caution due to shell history risks.")
+        )
 }
 
 /// Main function: parses CLI arguments, validates them, prompts for secret,
@@ -168,6 +196,7 @@ fn main() {
     let is_encrypt = matches.get_flag("encrypt");
     let output_format_preference = matches.get_one::<String>("format").unwrap().as_str();
     let base_image_path_str_opt = matches.get_one::<String>("base");
+    let cli_password_opt = matches.get_one::<String>("password").cloned(); // Get password from CLI
     
     let ratio_from_cli = *matches.get_one::<u8>("ratio").unwrap(); 
     let user_explicitly_set_ratio = matches.value_source("ratio") == Some(clap::parser::ValueSource::CommandLine);
@@ -223,8 +252,8 @@ fn main() {
 
     let input_path = Path::new(input_arg_str);
 
-    // Prompt for and validate the secret.
-    let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt);
+    // Prompt for and validate the secret, or use CLI provided password.
+    let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt, cli_password_opt);
 
     // Dispatch to folder or single file processing.
     if input_path.is_dir() {
