@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const PIXELLOCK_EXE: &str = env!("CARGO_BIN_EXE_PixelLock");
+const PIXELLOCK_EXE: &str = env!("CARGO_BIN_EXE_pixellock");
 const TEST_FILES_DIR: &str = "./tests/files";
 const BASE_IMAGE_NAME: &str = "base_image.png";
 const TEST_PASSWORD: &str = "TestPassword123!@#$"; // Meets complexity requirements

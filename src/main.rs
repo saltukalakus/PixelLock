@@ -103,7 +103,7 @@ fn validate_file_exists(file_path: &str) {
 /// # Returns
 /// * `Command` object for further processing (e.g., getting matches).
 fn build_cli_command() -> Command {
-    Command::new("PixelLock")
+    Command::new("pixellock")
         .version(APP_VERSION_STR) // Use const for version
         .author("Saltuk Alakus")
         .about("\nPixelLock is a command-line tool to secure your files (images and other types) with military-grade encryption. 

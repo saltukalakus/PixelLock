@@ -37,19 +37,19 @@ These steps generate the executable **PixelLock** in the `/target/release` direc
 
 * Encrypting a single file, embedding it into a provided base PNG:
 ```bash
-> PixelLock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
+> pixellock -e -i ./secret_image.jpeg -o ./stego_image -b ./my_base.png
 # Output will be ./stego_image.png (using my_base.png as a carrier, 1 LSB)
 ```
 
 * Decrypting a steganographic PNG image to reveal the secret file:
 ```bash
-> PixelLock -d -i ./stego_image.png -o ./secret_image
+> pixellock -d -i ./stego_image.png -o ./secret_image
 # Output extension will be based on detected original format, e.g., ./secret_image.jpeg
 ```
 
 * Encrypting all files in a folder, embedding them into a provided base PNG:
 ```bash
-> PixelLock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
+> pixellock -e -i ./image-folder -o ./stego_folder -b ./my_base.png
 
 Input
  ├── img-folder
@@ -65,7 +65,7 @@ Output
 
 * Decrypting all steganographic PNG images in a folder to an output folder:
 ```bash
-> PixelLock -d -i ./stego_folder -o ./image-folder
+> pixellock -d -i ./stego_folder -o ./image-folder
 
 Input
  ├── stego_folder
@@ -82,7 +82,7 @@ Output
 *  📖 For a full list of available options, try the help command:
 
 ```bash
-> PixelLock --help  
+> pixellock --help  
 ```
 
 ## 🧪 Running Tests 🧪

@@ -1,5 +1,5 @@
 [package]
-name = "PixelLock"
+name = "pixellock"
 version = "2.1.0"
 edition = "2021"
 license = "MIT"
