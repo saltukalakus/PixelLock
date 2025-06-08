@@ -175,6 +175,15 @@ fn build_cli_command() -> Command {
                 .required(false)
                 .help("Provide the password directly. If not set, you will be prompted interactively. Use with caution due to shell history risks.")
         )
+        // Recursive flag for folder operations
+        .arg(
+            Arg::new("recursive")
+                .short('R') // Changed from 'r' to 'R'
+                .long("recursive")
+                .action(ArgAction::SetTrue)
+                .help("Recursively process subdirectories in folder mode.")
+                .required(false),
+        )
 }
 
 /// Main function: parses CLI arguments, validates them, prompts for secret,
@@ -200,6 +209,7 @@ fn main() {
     
     let ratio_from_cli = *matches.get_one::<u8>("ratio").unwrap(); 
     let user_explicitly_set_ratio = matches.value_source("ratio") == Some(clap::parser::ValueSource::CommandLine);
+    let is_recursive = matches.get_flag("recursive");
 
     // Validate argument combinations.
     if is_decrypt {
@@ -252,6 +262,12 @@ fn main() {
 
     let input_path = Path::new(input_arg_str);
 
+    // Validate recursive flag usage
+    if is_recursive && !input_path.is_dir() {
+        eprintln!("Error: --recursive (-R) option can only be used when the input (-i) is a directory.");
+        std::process::exit(1);
+    }
+
     // Prompt for and validate the secret, or use CLI provided password.
     let encryption_secret: Zeroizing<String> = prompt_and_validate_secret(is_encrypt, cli_password_opt);
 
@@ -273,6 +289,7 @@ fn main() {
                 base_image_path_str_opt, 
                 lsb_bits_for_encryption,
                 app_version_bytes,
+                is_recursive, // Pass recursive flag
             );
         } else { // Decryption mode for folder
             decrypt::process_folder_decryption( 
@@ -280,6 +297,7 @@ fn main() {
                 output_arg_str, 
                 &encryption_secret,
                 app_version_bytes,
+                is_recursive, // Pass recursive flag
             );
         }
     } else {

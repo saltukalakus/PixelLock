@@ -291,7 +291,8 @@ fn test_folder_mode_generic(
     test_output_dir: &Path, // Renamed from temp_dir to avoid confusion, this is the specific test's output dir
     format_str: &str,
     base_image_opt: Option<&PathBuf>,
-    ratio_opt: Option<u8>
+    ratio_opt: Option<u8>,
+    recursive: bool
 ) {
     let input_folder_path = PathBuf::from(TEST_FILES_DIR);
     // test_output_dir is already the unique base for this test run (e.g., ./tests/tmp/test_folder_mode_txt_format/)
@@ -308,6 +309,9 @@ fn test_folder_mode_generic(
         "-f".to_string(), format_str.to_string(),
         "-p".to_string(), TEST_PASSWORD.to_string(),
     ];
+    if recursive {
+        encrypt_args.push("-R".to_string());
+    }
     if let Some(base_path) = base_image_opt {
         encrypt_args.push("-b".to_string());
         encrypt_args.push(base_path.to_str().unwrap().to_string());
@@ -318,19 +322,23 @@ fn test_folder_mode_generic(
     }
 
     let output_enc = run_pixel_lock(&encrypt_args).expect("Folder encryption failed");
-    assert!(output_enc.status.success(), "Folder encryption failed (format: {}, base: {:?}, ratio: {:?}): STDOUT: {}, STDERR: {}", format_str, base_image_opt.is_some(), ratio_opt, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
+    assert!(output_enc.status.success(), "Folder encryption failed (format: {}, base: {:?}, ratio: {:?}, recursive: {}): STDOUT: {}, STDERR: {}", format_str, base_image_opt.is_some(), ratio_opt, recursive, String::from_utf8_lossy(&output_enc.stdout), String::from_utf8_lossy(&output_enc.stderr));
 
     // Decrypt
-    let decrypt_args = vec![
+    let mut decrypt_args = vec![
         "-d".to_string(),
         "-i".to_string(), encrypted_output_folder.to_str().unwrap().to_string(),
         "-o".to_string(), decrypted_output_folder.to_str().unwrap().to_string(),
         "-p".to_string(), TEST_PASSWORD.to_string(),
     ];
+    if recursive {
+        decrypt_args.push("-R".to_string());
+    }
+
     let output_dec = run_pixel_lock(&decrypt_args).expect("Folder decryption process failed to start");
     
     // --- BEGIN ADDED DEBUGGING for FOLDER MODE ---
-    println!("\n--- Debugging test_folder_mode_generic (format: {}, base: {:?}, ratio: {:?}) ---", format_str, base_image_opt.is_some(), ratio_opt);
+    println!("\n--- Debugging test_folder_mode_generic (format: {}, base: {:?}, ratio: {:?}, recursive: {}) ---", format_str, base_image_opt.is_some(), ratio_opt, recursive);
     println!("Encrypted input folder for decryption: {:?}", encrypted_output_folder);
     println!("Decrypted output folder (argument to -o): {:?}", decrypted_output_folder);
     println!("Decrypt STDOUT:\n{}", String::from_utf8_lossy(&output_dec.stdout));
@@ -355,7 +363,7 @@ fn test_folder_mode_generic(
     }
     // --- END ADDED DEBUGGING for FOLDER MODE ---
 
-    assert!(output_dec.status.success(), "Folder decryption process failed (format: {}, base: {:?}, ratio: {:?}): STDOUT: {}, STDERR: {}", format_str, base_image_opt.is_some(), ratio_opt, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
+    assert!(output_dec.status.success(), "Folder decryption process failed (format: {}, base: {:?}, ratio: {:?}, recursive: {}): STDOUT: {}, STDERR: {}", format_str, base_image_opt.is_some(), ratio_opt, recursive, String::from_utf8_lossy(&output_dec.stdout), String::from_utf8_lossy(&output_dec.stderr));
 
     // Verify decrypted files
     for file_spec in TEST_FILES {
@@ -367,47 +375,57 @@ fn test_folder_mode_generic(
         
         let original_file_basename = format!("{}.{}", file_spec.name, file_spec.extension);
         
-        // PixelLock's folder decryption saves files with their original names + detected extensions.
-        // Example: If original was "test_image.jpeg", and it was encrypted (e.g. to "test_image.jpeg.txt" 
-        // if my previous assumption about encryption naming was wrong, or "test_image.jpeg.encrypted.txt" if it was right),
-        // the decryption process will output "test_image.jpeg" into the decrypted_output_folder.
         let actual_decrypted_path = decrypted_output_folder.join(&original_file_basename);
 
         if !actual_decrypted_path.exists() {
-            // Fallback: if the file exists without an extension (e.g. if detect_file_format failed for some reason)
-            // This case might not be hit if detect_file_format is robust or if PixelLock always adds some extension.
-            // The current PixelLock STDOUT shows it always saves with a detected extension.
-            // However, the original single-file test logic had a fallback for no extension, so keeping a similar thought.
-            // For folder mode, PixelLock's STDOUT shows it saves as `stem.detected_extension`.
-            // The `stem` used by `process_folder_decryption` appears to be the original filename without its final encrypted extension.
-            // e.g., for "test_image.jpeg.txt", stem is "test_image.jpeg".
-            // So, `actual_decrypted_path` as defined above should be correct.
             panic!("Expected decrypted file {:?} not found in folder mode for original {:?}. Check PixelLock's output naming in folder decryption.", 
                    actual_decrypted_path, original_file_basename);
         };
         
-        assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after folder encrypt/decrypt for {:?} (format: {}, base: {:?}, ratio: {:?})", original_file_path, format_str, base_image_opt.is_some(), ratio_opt);
+        assert!(compare_files(&original_file_path, &actual_decrypted_path), "Files differ after folder encrypt/decrypt for {:?} (format: {}, base: {:?}, ratio: {:?}, recursive: {})", original_file_path, format_str, base_image_opt.is_some(), ratio_opt, recursive);
     }
 }
 
 #[test]
 fn test_folder_mode_txt_format() {
     let test_dir = setup_test_environment(&["test_folder_mode_txt_format"]);
-    test_folder_mode_generic(&test_dir,"txt", None, None);
+    test_folder_mode_generic(&test_dir, "txt", None, None, false);
 }
 
 #[test]
 fn test_folder_mode_png_no_base() {
     let test_dir = setup_test_environment(&["test_folder_mode_png_no_base"]);
-    test_folder_mode_generic(&test_dir, "png", None, None);
+    test_folder_mode_generic(&test_dir, "png", None, None, false);
 }
 
 #[test]
-fn test_folder_mode_png_with_base_ratio1() {
+fn test_folder_mode_png_with_base_ratio1_non_recursive() {
     let base_image_path = get_base_image_path();
     if !base_image_path.exists() {
         panic!("Base image {:?} not found. Cannot run folder steganography test.", base_image_path);
     }
-    let test_dir = setup_test_environment(&["test_folder_mode_png_with_base_ratio1"]);
-    test_folder_mode_generic(&test_dir, "png", Some(&base_image_path), Some(1));
+    let test_dir = setup_test_environment(&["test_folder_mode_png_with_base_ratio1_non_recursive"]);
+    test_folder_mode_generic(&test_dir, "png", Some(&base_image_path), Some(1), false);
+}
+
+#[test]
+fn test_folder_mode_txt_format_recursive() {
+    let test_dir = setup_test_environment(&["test_folder_mode_txt_format_recursive"]);
+    test_folder_mode_generic(&test_dir, "txt", None, None, true);
+}
+
+#[test]
+fn test_folder_mode_png_no_base_recursive() {
+    let test_dir = setup_test_environment(&["test_folder_mode_png_no_base_recursive"]);
+    test_folder_mode_generic(&test_dir, "png", None, None, true);
+}
+
+#[test]
+fn test_folder_mode_png_with_base_ratio1_recursive() {
+    let base_image_path = get_base_image_path();
+    if !base_image_path.exists() {
+        panic!("Base image {:?} not found. Cannot run folder steganography test.", base_image_path);
+    }
+    let test_dir = setup_test_environment(&["test_folder_mode_png_with_base_ratio1_recursive"]);
+    test_folder_mode_generic(&test_dir, "png", Some(&base_image_path), Some(1), true);
 }

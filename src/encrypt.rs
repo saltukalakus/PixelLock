@@ -354,26 +354,138 @@ pub fn encrypt_file<P1: AsRef<Path> + std::fmt::Debug, P2: AsRef<Path> + std::fm
 
 /// Processes all supported files in an input directory for encryption.
 /// Uses a single derived key and salt for all files in the folder.
+/// Can operate recursively if `is_recursive` is true.
+fn process_folder_encryption_recursive_helper(
+    current_input_dir: &Path,
+    current_output_dir: &Path,
+    derived_key: &[u8; 32],
+    salt_for_folder: &SaltString,
+    output_format_preference: &str,
+    base_image_path_opt: Option<&Path>,
+    lsb_bits: u8,
+    app_version: (u8, u8, u8),
+    is_recursive: bool,
+    files_processed_successfully: &mut u32,
+    files_failed_to_process: &mut u32,
+    files_skipped_extension: &mut u32,
+) {
+    match fs::read_dir(current_input_dir) {
+        Ok(entries) => {
+            for entry_result in entries {
+                match entry_result {
+                    Ok(entry) => {
+                        let current_input_file_path = entry.path();
+                        let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
+                        let input_filename_complete_str = file_name_os_str.to_string_lossy();
+
+                        if current_input_file_path.is_dir() {
+                            if is_recursive {
+                                // Skip hidden directories like .git, .vscode etc.
+                                if input_filename_complete_str.starts_with('.') {
+                                    println!("Skipping hidden directory: {:?}", current_input_file_path);
+                                    continue;
+                                }
+                                println!("Entering directory: {:?}", current_input_file_path);
+                                let next_output_dir = current_output_dir.join(file_name_os_str);
+                                if !next_output_dir.exists() {
+                                    if let Err(e) = fs::create_dir_all(&next_output_dir) {
+                                        eprintln!("Error: Could not create output subdirectory '{:?}': {}", next_output_dir, e);
+                                        *files_failed_to_process += 1; // Count this as a failure for the parent dir processing
+                                        continue;
+                                    }
+                                }
+                                // Recursive call
+                                process_folder_encryption_recursive_helper(
+                                    &current_input_file_path,
+                                    &next_output_dir,
+                                    derived_key,
+                                    salt_for_folder,
+                                    output_format_preference,
+                                    base_image_path_opt,
+                                    lsb_bits,
+                                    app_version,
+                                    is_recursive,
+                                    files_processed_successfully,
+                                    files_failed_to_process,
+                                    files_skipped_extension,
+                                );
+                            } else {
+                                // Skip directory if not in recursive mode
+                                println!("Skipping directory (non-recursive mode): {:?}", current_input_file_path);
+                            }
+                        } else if current_input_file_path.is_file() {
+                            // Skip hidden files (e.g., .DS_Store) robustly
+                            if input_filename_complete_str.starts_with('.') {
+                                *files_skipped_extension +=1;
+                                continue; // Silently skip hidden files
+                            }
+
+                            let new_base_name = format!("{}.encrypted", input_filename_complete_str);
+                            let current_output_file_path_base = current_output_dir.join(new_base_name);
+
+                            print!("Encrypting {:?} -> {:?} (final extension .{}) ... ",
+                                   current_input_file_path,
+                                   current_output_file_path_base,
+                                   output_format_preference);
+                            
+                            let core_config = EncryptionCoreConfig {
+                                output_format_preference,
+                                base_image_path_opt,
+                                lsb_bits_per_channel: lsb_bits,
+                                app_version,
+                            };
+
+                            match encrypt_file_core(
+                                &current_input_file_path,
+                                &current_output_file_path_base,
+                                derived_key,
+                                salt_for_folder,
+                                &core_config,
+                            ) {
+                                Ok(_) => {
+                                    println!("Done.");
+                                    *files_processed_successfully += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("\nError encrypting file {:?}: {}", current_input_file_path, e);
+                                    *files_failed_to_process += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading a directory entry in {:?}: {}", current_input_dir, e);
+                        *files_failed_to_process += 1;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: Could not read input directory '{:?}': {}", current_input_dir, e);
+            *files_failed_to_process +=1;
+        }
+    }
+}
+
 pub fn process_folder_encryption(
     input_dir_str: &str,
     output_dir_str: &str,
     encryption_secret: &Zeroizing<String>,
     output_format_preference: &str,
-    base_image_path_str_opt: Option<&String>, // Note: This is &String, consider if &Path or String is better
+    base_image_path_str_opt: Option<&String>,
     lsb_bits: u8,
     app_version: (u8, u8, u8),
+    is_recursive: bool,
 ) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
 
-    // Generate salt and derive key ONCE for the entire folder
+    // Generate salt and derive key ONCE for the entire folder operation
     let salt_for_folder = SaltString::generate(&mut OsRng);
     let derived_key = match derive_encryption_key_with_salt(encryption_secret, &salt_for_folder) {
         Ok(key) => key,
         Err(e) => {
             eprintln!("Error deriving key for folder encryption: {}", e);
-            // Consistent with other error handling in this function, exit.
-            // Consider changing this function to return Result for better library use.
             std::process::exit(1); 
         }
     };
@@ -389,81 +501,36 @@ pub fn process_folder_encryption(
         std::process::exit(1);
     }
 
-    match fs::read_dir(input_dir) {
-        Ok(entries) => {
-            let mut files_processed_successfully = 0;
-            let mut files_failed_to_process = 0;
-            let mut files_skipped_extension = 0; // This counter might become less relevant
-            println!("\nStarting folder encryption...");
+    let mut files_processed_successfully = 0;
+    let mut files_failed_to_process = 0;
+    let mut files_skipped_extension = 0;
+    println!("\nStarting folder encryption (Recursive: {})...", is_recursive);
 
-            for entry_result in entries {
-                match entry_result {
-                    Ok(entry) => {
-                        let current_input_file_path = entry.path();
-                        if current_input_file_path.is_file() {
-                            // Skip hidden files (e.g., .DS_Store) robustly
-                            if let Some(name_os_str) = current_input_file_path.file_name() {
-                                if name_os_str.to_string_lossy().starts_with('.') {
-                                    files_skipped_extension +=1; // Count skipped hidden files
-                                    continue; // Silently skip hidden files
-                                }
-                            }
+    // Map Option<&String> to Option<PathBuf> for the helper
+    let base_path_for_core_opt_owned: Option<PathBuf> = base_image_path_str_opt.map(|s| PathBuf::from(s.as_str()));
+    // Then convert Option<PathBuf> to Option<&Path> for the helper function
+    let base_path_for_helper: Option<&Path> = base_path_for_core_opt_owned.as_deref();
 
-                            let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
-                            let input_filename_complete_str = file_name_os_str.to_string_lossy();
-                            let new_base_name = format!("{}.encrypted", input_filename_complete_str);
-                            let current_output_file_path_base = output_dir.join(new_base_name);
-
-                            print!("Encrypting {:?} -> {:?} (final extension .{}) ... ",
-                                   current_input_file_path,
-                                   current_output_file_path_base,
-                                   output_format_preference);
-                            
-                            // Pass base_image_path_str_opt by mapping &String to &Path
-                            let base_path_for_core = base_image_path_str_opt.map(|s| Path::new(s.as_str()));
-
-                            let core_config = EncryptionCoreConfig {
-                                output_format_preference,
-                                base_image_path_opt: base_path_for_core,
-                                lsb_bits_per_channel: lsb_bits,
-                                app_version,
-                            };
-
-                            match encrypt_file_core(
-                                &current_input_file_path,
-                                &current_output_file_path_base,
-                                &derived_key, // Use the key derived above
-                                &salt_for_folder, // Use the salt generated above
-                                &core_config,
-                            ) {
-                                Ok(_) => {
-                                    println!("Done.");
-                                    files_processed_successfully += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!("\nError encrypting file {:?}: {}", current_input_file_path, e);
-                                    files_failed_to_process += 1;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading a directory entry: {}", e);
-                        files_failed_to_process += 1;
-                    }
-                }
-            }
-            println!("\nFolder encryption summary:");
-            println!("  Files successfully encrypted: {}", files_processed_successfully);
-            println!("  Files failed to encrypt: {}", files_failed_to_process);
-            if files_skipped_extension > 0 {
-                println!("  Files skipped (e.g. hidden or previously filtered): {}", files_skipped_extension);
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
-            std::process::exit(1);
-        }
+    process_folder_encryption_recursive_helper(
+        input_dir,
+        output_dir,
+        &derived_key,
+        &salt_for_folder,
+        output_format_preference,
+        base_path_for_helper,
+        lsb_bits,
+        app_version,
+        is_recursive,
+        &mut files_processed_successfully,
+        &mut files_failed_to_process,
+        &mut files_skipped_extension,
+    );
+    
+    println!("\nFolder encryption summary:");
+    println!("  Files successfully encrypted: {}", files_processed_successfully);
+    println!("  Files failed to encrypt: {}", files_failed_to_process);
+    if files_skipped_extension > 0 {
+        println!("  Files skipped (e.g. hidden or previously filtered): {}", files_skipped_extension);
     }
 }
 

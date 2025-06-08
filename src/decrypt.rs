@@ -12,11 +12,117 @@ use crate::secret::{derive_encryption_key_with_salt};
 use crate::encrypt::{SALT_STRING_LEN, NONCE_STRING_LEN, VERSION_INFO_LEN, EXT_LEN_FIELD_LEN};
 
 /// Processes all supported files in an input directory for decryption.
+/// Can operate recursively if `is_recursive` is true.
+fn process_folder_decryption_recursive_helper(
+    current_input_dir: &Path,
+    current_output_dir: &Path,
+    secret: &Zeroizing<String>,
+    app_version: (u8, u8, u8),
+    is_recursive: bool,
+    files_processed_successfully: &mut u32,
+    files_failed_to_process: &mut u32,
+    files_skipped_extension: &mut u32,
+) {
+    match fs::read_dir(current_input_dir) {
+        Ok(entries) => {
+            for entry_result in entries {
+                match entry_result {
+                    Ok(entry) => {
+                        let current_input_file_path = entry.path();
+                        let file_name_os_str = current_input_file_path.file_name().unwrap_or_default();
+                        let input_filename_complete_str = file_name_os_str.to_string_lossy();
+
+                        if current_input_file_path.is_dir() {
+                            if is_recursive {
+                                // Skip hidden directories
+                                if input_filename_complete_str.starts_with('.') {
+                                    println!("Skipping hidden directory: {:?}", current_input_file_path);
+                                    continue;
+                                }
+                                println!("Entering directory for decryption: {:?}", current_input_file_path);
+                                let next_output_dir = current_output_dir.join(file_name_os_str);
+                                if !next_output_dir.exists() {
+                                    if let Err(e) = fs::create_dir_all(&next_output_dir) {
+                                        eprintln!("Error: Could not create output subdirectory '{:?}': {}", next_output_dir, e);
+                                        *files_failed_to_process += 1;
+                                        continue;
+                                    }
+                                }
+                                // Recursive call
+                                process_folder_decryption_recursive_helper(
+                                    &current_input_file_path,
+                                    &next_output_dir,
+                                    secret,
+                                    app_version,
+                                    is_recursive,
+                                    files_processed_successfully,
+                                    files_failed_to_process,
+                                    files_skipped_extension,
+                                );
+                            } else {
+                                println!("Skipping directory (non-recursive mode): {:?}", current_input_file_path);
+                            }
+                        } else if current_input_file_path.is_file() {
+                            // Skip hidden files
+                            if input_filename_complete_str.starts_with('.') {
+                                *files_skipped_extension +=1;
+                                continue;
+                            }
+
+                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            let lower_extension = extension.to_lowercase();
+
+                            if !(lower_extension == "txt" || lower_extension == "png" || lower_extension == "jpeg" || lower_extension == "jpg") {
+                                *files_skipped_extension += 1;
+                                continue;
+                            }
+                            
+                            let file_stem_str = current_input_file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("decrypted_file");
+                            let base_name_for_decryption = if file_stem_str.ends_with(".encrypted") {
+                                file_stem_str.trim_end_matches(".encrypted")
+                            } else {
+                                file_stem_str
+                            };
+
+                            let current_output_file_path_base = current_output_dir.join(base_name_for_decryption);
+
+                            print!("Decrypting {:?} -> {:?} (extension auto-detected) ... ",
+                                   current_input_file_path,
+                                   current_output_file_path_base);
+
+                            match decrypt_file(&current_input_file_path, &current_output_file_path_base, secret, app_version) {
+                                Ok(_) => {
+                                    println!("Done.");
+                                    *files_processed_successfully += 1;
+                                }
+                                Err(e) => { // Error is printed by decrypt_file
+                                    eprintln!(" Error during decryption of {:?}: {}", current_input_file_path, e);
+                                    *files_failed_to_process += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading a directory entry in {:?}: {}", current_input_dir, e);
+                        *files_failed_to_process += 1;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: Could not read input directory '{:?}': {}", current_input_dir, e);
+            *files_failed_to_process +=1;
+        }
+    }
+}
+
+/// Processes all supported files in an input directory for decryption.
 pub fn process_folder_decryption(
     input_dir_str: &str,
     output_dir_str: &str,
     secret: &Zeroizing<String>,
     app_version: (u8, u8, u8),
+    is_recursive: bool, // New parameter
 ) {
     let input_dir = Path::new(input_dir_str);
     let output_dir = Path::new(output_dir_str);
@@ -32,68 +138,27 @@ pub fn process_folder_decryption(
         std::process::exit(1);
     }
 
-    match fs::read_dir(input_dir) {
-        Ok(entries) => {
-            let mut files_processed_successfully = 0;
-            let mut files_failed_to_process = 0;
-            let mut files_skipped_extension = 0;
-            println!("\nStarting folder decryption...");
+    let mut files_processed_successfully = 0;
+    let mut files_failed_to_process = 0;
+    let mut files_skipped_extension = 0;
+    println!("\nStarting folder decryption (Recursive: {})...", is_recursive);
 
-            for entry_result in entries {
-                match entry_result {
-                    Ok(entry) => {
-                        let current_input_file_path = entry.path();
-                        if current_input_file_path.is_file() {
-                            // Skip hidden files (e.g., .DS_Store) robustly
-                            if let Some(name_os_str) = current_input_file_path.file_name() {
-                                if name_os_str.to_string_lossy().starts_with('.') {
-                                    continue; // Silently skip hidden files
-                                }
-                            }
+    process_folder_decryption_recursive_helper(
+        input_dir,
+        output_dir,
+        secret,
+        app_version,
+        is_recursive,
+        &mut files_processed_successfully,
+        &mut files_failed_to_process,
+        &mut files_skipped_extension,
+    );
 
-                            let extension = current_input_file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                            let lower_extension = extension.to_lowercase();
-
-                            if !(lower_extension == "txt" || lower_extension == "png") {
-                                files_skipped_extension += 1;
-                                continue;
-                            }
-
-                            let stem = current_input_file_path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("decrypted_file"));
-                            let current_output_file_path_base = output_dir.join(stem);
-
-                            print!("Decrypting {:?} -> {:?} (extension auto-detected) ... ",
-                                   current_input_file_path,
-                                   current_output_file_path_base);
-
-                            match decrypt_file(&current_input_file_path, &current_output_file_path_base, secret, app_version) { // Call local decrypt_file
-                                Ok(_) => {
-                                    println!("Done.");
-                                    files_processed_successfully += 1;
-                                }
-                                Err(_e) => { // Marked 'e' as unused
-                                    files_failed_to_process += 1;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading a directory entry: {}", e);
-                        files_failed_to_process += 1;
-                    }
-                }
-            }
-            println!("\nFolder decryption summary:");
-            println!("  Files successfully decrypted: {}", files_processed_successfully);
-            println!("  Files failed to decrypt: {}", files_failed_to_process);
-            if files_skipped_extension > 0 {
-                println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: Could not read input directory '{}': {}", input_dir_str, e);
-            std::process::exit(1);
-        }
+    println!("\nFolder decryption summary:");
+    println!("  Files successfully decrypted: {}", files_processed_successfully);
+    println!("  Files failed to decrypt: {}", files_failed_to_process);
+    if files_skipped_extension > 0 {
+        println!("  Files skipped (unsupported extension): {}", files_skipped_extension);
     }
 }
 
@@ -246,8 +311,6 @@ fn extract_payload_from_carrier(
                                 let len_arr_payload: [u8; 4] = all_extracted_data_bytes[1..5].try_into().unwrap();
                                 expected_total_payload_len_opt = Some(u32::from_be_bytes(len_arr_payload) as usize);
                                 
-                                // println!("Steg Header Decoded: LSBs for payload: {}, Payload length: {}", lsb_val, expected_total_payload_len_opt.unwrap());
-
                                 extracting_header_stage = false; // Switch to payload extraction mode
                                 bytes_extracted_count = 0; // Reset byte counter for the main payload
                                 all_extracted_data_bytes.clear(); // Clear header bytes, start collecting payload
