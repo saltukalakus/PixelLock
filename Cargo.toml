@@ -1,8 +1,12 @@
 [package]
 name = "PixelLock"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 license = "MIT"
+
+[profile.release]
+codegen-units = 1
+lto = true
 
 [dependencies]
 argon2 = { version = "0.5.3", features = ["password-hash"] }
